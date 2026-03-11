@@ -119,4 +119,4 @@ Currently supports the **Forge Real Estate** Income & Expenditure Summary layout
 ---
 
 ## 📄 Demo
-![Demo](https://leo0331.github.io/simpletaxautoextraction/)
+[Demo](https://leo0331.github.io/simpletaxautoextraction/)
