@@ -1,0 +1,33 @@
+name: Deploy Flutter Web
+
+on:
+  push:
+    branches:
+      - main  # 確保你的主分支名稱是 main
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # 解決 SDK ^3.11.0 要求：使用最新穩定版或開發版
+          channel: 'stable' 
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Web
+        run: flutter build web --release --base-href "/simpletaxautoextraction/"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
