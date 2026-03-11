@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Top-level users collection
+    match /users/{userId} {
+      // Allow a user to read/write their own user document
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Match the tax_records subcollection for a specific user
+      match /tax_records/{recordId} {
+        // Only the authenticated user whose ID matches the userId in the path
+        // can read, create, update, or delete records in their own subcollection.
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}
