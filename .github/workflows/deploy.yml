@@ -24,9 +24,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Create firebase_options.dart
-        run: echo "${{ secrets.FIREBASE_OPTIONS }}" | base64 -d > lib/firebase_options.dart
-
       - name: Analyze project
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
