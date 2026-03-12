@@ -2,7 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/tax_record.dart';
 
 class FirestoreService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFirestore _db;
+
+  FirestoreService({FirebaseFirestore? db}) : _db = db ?? FirebaseFirestore.instance;
 
   Future<void> saveTaxRecord(TaxRecord record) async {
     final colRef = _db.collection('users').doc(record.userId).collection('tax_records');

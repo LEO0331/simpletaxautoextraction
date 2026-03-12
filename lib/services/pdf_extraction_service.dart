@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:meta/meta.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../models/tax_record.dart';
 
@@ -12,14 +13,15 @@ class PdfExtractionService {
       String extractedText = textExtractor.extractText();
       document.dispose();
 
-      return _parseExtractedText(extractedText, userId, financialYear);
+      return parseExtractedText(extractedText, userId, financialYear);
     } catch (e) {
       debugPrint('Error extracting PDF: $e');
       rethrow;
     }
   }
 
-  TaxRecord _parseExtractedText(
+  @visibleForTesting
+  TaxRecord parseExtractedText(
       String text, String userId, String financialYear) {
     // Start with an empty ATO template
     final record = TaxRecord.empty(userId, financialYear);
@@ -72,7 +74,7 @@ class PdfExtractionService {
               // Add GST total to our previous category mapped value if necessary 
               // (usually we map the full value including GST for deductions, subject to user's GST registration)
               // Let's assume standard residential landlords add GST to the total expense.
-              _addValueToAtoCategory(record, currentCategory!, total,
+              addValueToAtoCategory(record, currentCategory!, total,
                   isIncome: parsingIncome);
               expectsGst = false;
               currentCategory = null;
@@ -83,12 +85,12 @@ class PdfExtractionService {
                 expectsGst = true;
                 // Save the base total to be added with the GST total later, 
                 // but actually it's easier to just add them as we see them.
-                _addValueToAtoCategory(record, currentCategory!, total,
+                addValueToAtoCategory(record, currentCategory!, total,
                     isIncome: parsingIncome);
                 currentValues.clear(); // Clear to collect the 3 GST values
               } else {
                 // No GST follows, commit the total
-                _addValueToAtoCategory(record, currentCategory!, total,
+                addValueToAtoCategory(record, currentCategory!, total,
                     isIncome: parsingIncome);
                 currentCategory = null;
                 currentValues.clear();
@@ -117,7 +119,8 @@ class PdfExtractionService {
   }
 
   /// Maps the Forge Real Estate category to ATO Worksheet Category
-  void _addValueToAtoCategory(TaxRecord record, String category, double amount,
+  @visibleForTesting
+  void addValueToAtoCategory(TaxRecord record, String category, double amount,
       {required bool isIncome}) {
     if (amount == 0) return;
 
