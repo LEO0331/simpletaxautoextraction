@@ -5,8 +5,9 @@ import '../services/firestore_service.dart';
 
 class WorksheetScreen extends StatefulWidget {
   final TaxRecord record;
+  final FirestoreService? firestoreService;
 
-  const WorksheetScreen({super.key, required this.record});
+  const WorksheetScreen({super.key, required this.record, this.firestoreService});
 
   @override
   State<WorksheetScreen> createState() => _WorksheetScreenState();
@@ -14,13 +15,14 @@ class WorksheetScreen extends StatefulWidget {
 
 class _WorksheetScreenState extends State<WorksheetScreen> {
   late TaxRecord _activeRecord;
-  final FirestoreService _firestoreService = FirestoreService();
+  late final FirestoreService _firestoreService;
   bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
     _activeRecord = widget.record;
+    _firestoreService = widget.firestoreService ?? FirestoreService();
   }
 
   void _updateIncome(String category, String value) {

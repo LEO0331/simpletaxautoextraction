@@ -6,15 +6,25 @@ import '../models/tax_record.dart';
 import '../services/firestore_service.dart';
 
 class ComparisonScreen extends StatefulWidget {
-  const ComparisonScreen({super.key});
+  final FirestoreService? firestoreService;
+  final String? userId;
+
+  const ComparisonScreen({super.key, this.firestoreService, this.userId});
 
   @override
   State<ComparisonScreen> createState() => _ComparisonScreenState();
 }
 
 class _ComparisonScreenState extends State<ComparisonScreen> {
-  final FirestoreService _firestoreService = FirestoreService();
-  final String _userId = FirebaseAuth.instance.currentUser!.uid;
+  late final FirestoreService _firestoreService;
+  late final String _userId;
+
+  @override
+  void initState() {
+    super.initState();
+    _firestoreService = widget.firestoreService ?? FirestoreService();
+    _userId = widget.userId ?? FirebaseAuth.instance.currentUser!.uid;
+  }
 
   @override
   Widget build(BuildContext context) {

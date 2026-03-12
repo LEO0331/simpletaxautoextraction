@@ -100,11 +100,12 @@ lib/
 
 ---
 
-## 🔒 Security
+## 🔒 Security and test coverage
 
 - **Firebase Auth** ensures only authenticated users can access data.
 - **Firestore Security Rules** enforce that each user can only read/write their own `tax_records` subcollection.
 
+![Test Coverage](assets/screenshots/test_coverage.png)
 ---
 
 ## 📋 Supported PDF Formats

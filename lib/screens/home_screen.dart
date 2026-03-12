@@ -10,16 +10,33 @@ import 'worksheet_screen.dart';
 import 'comparison_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final AuthService? authService;
+  final FirestoreService? firestoreService;
+  final PdfExtractionService? pdfExtractionService;
+
+  const HomeScreen({
+    super.key,
+    this.authService,
+    this.firestoreService,
+    this.pdfExtractionService,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final AuthService _authService = AuthService();
-  final FirestoreService _firestoreService = FirestoreService();
-  final PdfExtractionService _pdfExtractionService = PdfExtractionService();
+  late final AuthService _authService;
+  late final FirestoreService _firestoreService;
+  late final PdfExtractionService _pdfExtractionService;
+  
+  @override
+  void initState() {
+    super.initState();
+    _authService = widget.authService ?? AuthService();
+    _firestoreService = widget.firestoreService ?? FirestoreService();
+    _pdfExtractionService = widget.pdfExtractionService ?? PdfExtractionService();
+  }
   
   bool _isProcessing = false;
 
@@ -42,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       try {
-        final userId = FirebaseAuth.instance.currentUser!.uid;
+        final userId = _authService.currentUser!.uid;
         final record = await _pdfExtractionService.extractFromPdf(bytes, userId, year);
         
         if (mounted) {
@@ -101,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = _authService.currentUser;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -118,7 +135,10 @@ class _HomeScreenState extends State<HomeScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ComparisonScreen(),
+                  builder: (context) => ComparisonScreen(
+                    firestoreService: _firestoreService,
+                    userId: user?.uid,
+                  ),
                 ),
               );
             },

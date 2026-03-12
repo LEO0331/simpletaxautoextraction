@@ -147,12 +147,12 @@ class PdfExtractionService {
       } else if (category.contains('insurance')) {
         record.expenses['Insurance'] =
             (record.expenses['Insurance'] ?? 0.0) + amount;
-      } else if (category.contains('water') || category.contains('rates')) {
-        record.expenses['Water charges'] =
-            (record.expenses['Water charges'] ?? 0.0) + amount;
       } else if (category.contains('council')) {
         record.expenses['Council rates'] =
             (record.expenses['Council rates'] ?? 0.0) + amount;
+      } else if (category.contains('water') || category.contains('rates')) {
+        record.expenses['Water charges'] =
+            (record.expenses['Water charges'] ?? 0.0) + amount;
       } else if (category.contains('interest')) {
         record.expenses['Interest on loans'] =
             (record.expenses['Interest on loans'] ?? 0.0) + amount;

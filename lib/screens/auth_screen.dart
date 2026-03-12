@@ -4,14 +4,22 @@ import 'package:google_fonts/google_fonts.dart';
 import '../services/auth_service.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  final AuthService? authService;
+  
+  const AuthScreen({super.key, this.authService});
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  final AuthService _authService = AuthService();
+  late final AuthService _authService;
+  
+  @override
+  void initState() {
+    super.initState();
+    _authService = widget.authService ?? AuthService();
+  }
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLogin = true;

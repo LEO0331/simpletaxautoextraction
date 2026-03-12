@@ -39,6 +39,7 @@ PROPERTY BALANCE:
           '\$300.00\n'
           'PROPERTY BALANCE:';
       final record = service.parseExtractedText(text, userId, financialYear);
+      print('Parsed Expenses: \n${record.expenses}');
       
       expect(record.expenses['Property agent fees and commission'], 55.00);
       expect(record.expenses['Council rates'], 300.00);
