@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/tax_record.dart';
 import '../services/firestore_service.dart';
+import 'auth_screen.dart';
 
 class ComparisonScreen extends StatefulWidget {
   final FirestoreService? firestoreService;
@@ -17,17 +18,44 @@ class ComparisonScreen extends StatefulWidget {
 
 class _ComparisonScreenState extends State<ComparisonScreen> {
   late final FirestoreService _firestoreService;
-  late final String _userId;
 
   @override
   void initState() {
     super.initState();
     _firestoreService = widget.firestoreService ?? FirestoreService();
-    _userId = widget.userId ?? FirebaseAuth.instance.currentUser!.uid;
   }
 
   @override
   Widget build(BuildContext context) {
+    // IMPORTANT: In widget tests (and some non-Firebase contexts), Firebase may
+    // not be initialized. Accessing FirebaseAuth.instance would throw. We only
+    // consult FirebaseAuth when we actually need it, and we guard access.
+    String? currentUid;
+    try {
+      currentUid = FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      currentUid = null;
+    }
+
+    // Prefer an explicitly provided userId (tests pass this in, and it avoids
+    // touching FirebaseAuth if Firebase isn't initialized).
+    String? safeUserId = widget.userId;
+
+    // If no userId was provided, require an authenticated user.
+    if (safeUserId == null) {
+      if (currentUid == null) {
+        // If user navigates here via browser history after sign-out, block access.
+        return const AuthScreen();
+      }
+      safeUserId = currentUid;
+    }
+
+    // Defense-in-depth: if both are available but differ, always use the
+    // authenticated user's uid.
+    if (currentUid != null && safeUserId != currentUid) {
+      safeUserId = currentUid;
+    }
+
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -37,7 +65,7 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
         ),
       ),
       body: StreamBuilder<List<TaxRecord>>(
-        stream: _firestoreService.getUserTaxRecords(_userId),
+        stream: _firestoreService.getUserTaxRecords(safeUserId),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
