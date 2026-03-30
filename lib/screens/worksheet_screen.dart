@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/tax_record.dart';
+import '../services/draft_sync_service.dart';
 import '../services/firestore_service.dart';
 
 class WorksheetScreen extends StatefulWidget {
@@ -23,6 +24,8 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
 
   late TaxRecord _activeRecord;
   late final FirestoreService _firestoreService;
+  late final TextEditingController _notesController;
+  late bool _isLocked;
   bool _isSaving = false;
 
   @override
@@ -30,9 +33,20 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
     super.initState();
     _activeRecord = widget.record;
     _firestoreService = widget.firestoreService ?? FirestoreService();
+    _notesController = TextEditingController(text: _activeRecord.notes);
+    _isLocked = _activeRecord.isLocked;
+  }
+
+  @override
+  void dispose() {
+    _notesController.dispose();
+    super.dispose();
   }
 
   void _updateIncome(String category, String value) {
+    if (_isLocked) {
+      return;
+    }
     final doubleAmount = double.tryParse(value) ?? 0.0;
     setState(() {
       _activeRecord.income[category] = doubleAmount;
@@ -40,6 +54,9 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
   }
 
   void _updateExpense(String category, String value) {
+    if (_isLocked) {
+      return;
+    }
     final doubleAmount = double.tryParse(value) ?? 0.0;
     setState(() {
       _activeRecord.expenses[category] = doubleAmount;
@@ -47,6 +64,17 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
   }
 
   Future<void> _saveRecord({bool saveAsNewYear = false}) async {
+    if (_isLocked && !saveAsNewYear) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This record is locked. Use Save As New Year to create a copy.',
+          ),
+        ),
+      );
+      return;
+    }
+
     String? targetYear;
     if (saveAsNewYear) {
       targetYear = await _showSaveAsNewYearDialog();
@@ -59,18 +87,24 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
       _isSaving = true;
     });
 
+    final recordToSave = _activeRecord.copyWith(
+      notes: _notesController.text.trim(),
+      isLocked: _isLocked,
+      financialYear: targetYear ?? _activeRecord.financialYear,
+    );
+
     try {
       SaveTaxRecordResult result;
       if (saveAsNewYear) {
         result = await _firestoreService.saveTaxRecordWithStrategy(
-          _activeRecord,
+          recordToSave,
           saveAsNewYear: true,
           overrideFinancialYear: targetYear,
         );
       } else {
-        await _firestoreService.saveTaxRecord(_activeRecord);
+        await _firestoreService.saveTaxRecord(recordToSave);
         result = SaveTaxRecordResult(
-          documentId: _activeRecord.id ?? '',
+          documentId: recordToSave.id ?? '',
           replacedExistingYear: false,
         );
       }
@@ -80,9 +114,8 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
       }
 
       setState(() {
-        _activeRecord = _activeRecord.copyWith(
-          id: result.documentId.isEmpty ? _activeRecord.id : result.documentId,
-          financialYear: targetYear ?? _activeRecord.financialYear,
+        _activeRecord = recordToSave.copyWith(
+          id: result.documentId.isEmpty ? recordToSave.id : result.documentId,
         );
       });
 
@@ -100,14 +133,15 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
         Navigator.of(context).pop();
       }
     } catch (e) {
+      DraftSyncService.instance.queueDraft(recordToSave);
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error saving: $e'),
+          content: Text('Save failed, draft queued for sync: $e'),
           action: SnackBarAction(
-            label: 'Retry',
+            label: 'Retry now',
             onPressed: () => _saveRecord(saveAsNewYear: saveAsNewYear),
           ),
         ),
@@ -231,12 +265,40 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16.0),
           child: Center(
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 800),
+            child: SizedBox(
+              width: 800,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _buildSummaryCard(),
+                  const SizedBox(height: 16),
+                  Card(
+                    child: SwitchListTile(
+                      title: const Text('Lock this financial year'),
+                      subtitle: const Text(
+                        'Locked records can only be copied to a new year.',
+                      ),
+                      value: _isLocked,
+                      onChanged: (val) {
+                        setState(() {
+                          _isLocked = val;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _notesController,
+                    maxLines: 3,
+                    readOnly: _isLocked,
+                    decoration: const InputDecoration(
+                      labelText: 'Notes',
+                      hintText: 'Add explanation for accountant/audit trail',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildLineItemsCard(),
                   const SizedBox(height: 24),
                   Text(
                     'Income',
@@ -366,6 +428,7 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                 Expanded(
                   flex: 1,
                   child: TextFormField(
+                    enabled: !_isLocked,
                     initialValue: value == 0.0 ? '' : value.toStringAsFixed(2),
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
@@ -388,6 +451,45 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildLineItemsCard() {
+    if (_activeRecord.lineItems.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Extracted Transaction Details',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 180,
+              child: ListView.separated(
+                itemCount: _activeRecord.lineItems.length,
+                separatorBuilder: (_, _) => const Divider(height: 12),
+                itemBuilder: (context, index) {
+                  final item = _activeRecord.lineItems[index];
+                  final source = item['sourceCategory'] ?? 'Unknown';
+                  final amount = item['amount'] ?? 0.0;
+                  final mapped = item['mappedCategory'] ?? 'UNMAPPED';
+                  return Text(
+                    '$source -> $mapped  (\$${(amount as num).toStringAsFixed(2)})',
+                    style: GoogleFonts.inter(fontSize: 13),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

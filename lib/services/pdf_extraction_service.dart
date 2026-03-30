@@ -36,6 +36,7 @@ class _ParseStats {
   int mappedEntryCount = 0;
   int totalEntryCount = 0;
   final List<UnmappedExtractionEntry> unmappedEntries = [];
+  final List<Map<String, dynamic>> lineItems = [];
 }
 
 class _ParserLayout {
@@ -71,9 +72,23 @@ class PdfExtractionService {
   Future<TaxRecord> extractFromPdf(
     List<int> bytes,
     String userId,
-    String financialYear,
-  ) async {
-    final result = await extractPreviewFromPdf(bytes, userId, financialYear);
+    String financialYear, {
+    String propertyId = 'default',
+    String propertyName = 'Primary Property',
+    String? sourceFileName,
+    Map<String, String>? customIncomeMappings,
+    Map<String, String>? customExpenseMappings,
+  }) async {
+    final result = await extractPreviewFromPdf(
+      bytes,
+      userId,
+      financialYear,
+      propertyId: propertyId,
+      propertyName: propertyName,
+      sourceFileName: sourceFileName,
+      customIncomeMappings: customIncomeMappings,
+      customExpenseMappings: customExpenseMappings,
+    );
     return result.record;
   }
 
@@ -81,8 +96,13 @@ class PdfExtractionService {
   Future<PdfExtractionResult> extractPreviewFromPdf(
     List<int> bytes,
     String userId,
-    String financialYear,
-  ) async {
+    String financialYear, {
+    String propertyId = 'default',
+    String propertyName = 'Primary Property',
+    String? sourceFileName,
+    Map<String, String>? customIncomeMappings,
+    Map<String, String>? customExpenseMappings,
+  }) async {
     try {
       final document = PdfDocument(inputBytes: bytes);
       final textExtractor = PdfTextExtractor(document);
@@ -93,6 +113,11 @@ class PdfExtractionService {
         extractedText,
         userId,
         financialYear,
+        propertyId: propertyId,
+        propertyName: propertyName,
+        sourceFileName: sourceFileName,
+        customIncomeMappings: customIncomeMappings,
+        customExpenseMappings: customExpenseMappings,
       );
     } catch (e) {
       debugPrint('Error extracting PDF: $e');
@@ -103,13 +128,23 @@ class PdfExtractionService {
   TaxRecord parseExtractedText(
     String text,
     String userId,
-    String financialYear,
-  ) {
+    String financialYear, {
+    String propertyId = 'default',
+    String propertyName = 'Primary Property',
+    String? sourceFileName,
+    Map<String, String>? customIncomeMappings,
+    Map<String, String>? customExpenseMappings,
+  }) {
     return parseExtractedTextWithMetadata(
       text,
       userId,
       financialYear,
       keepUnknownAsSundry: true,
+      propertyId: propertyId,
+      propertyName: propertyName,
+      sourceFileName: sourceFileName,
+      customIncomeMappings: customIncomeMappings,
+      customExpenseMappings: customExpenseMappings,
     ).record;
   }
 
@@ -119,11 +154,21 @@ class PdfExtractionService {
     String userId,
     String financialYear, {
     bool keepUnknownAsSundry = false,
+    String propertyId = 'default',
+    String propertyName = 'Primary Property',
+    String? sourceFileName,
+    Map<String, String>? customIncomeMappings,
+    Map<String, String>? customExpenseMappings,
   }) {
     final lines = text.split('\n').map((line) => line.trim()).toList();
     final layout = _pickLayout(lines);
     final stats = _ParseStats();
-    final record = TaxRecord.empty(userId, financialYear);
+    final record = TaxRecord.empty(
+      userId,
+      financialYear,
+      propertyId: propertyId,
+      propertyName: propertyName,
+    );
 
     _parseWithLayout(
       lines,
@@ -131,6 +176,8 @@ class PdfExtractionService {
       record,
       stats,
       keepUnknownAsSundry: keepUnknownAsSundry,
+      customIncomeMappings: customIncomeMappings ?? const {},
+      customExpenseMappings: customExpenseMappings ?? const {},
     );
 
     final confidence = stats.totalEntryCount == 0
@@ -138,7 +185,12 @@ class PdfExtractionService {
         : stats.mappedEntryCount / stats.totalEntryCount;
 
     return PdfExtractionResult(
-      record: record,
+      record: record.copyWith(
+        sourceFileName: sourceFileName,
+        sourceParser: layout.name,
+        parserVersion: 'v2',
+        lineItems: stats.lineItems,
+      ),
       parserName: layout.name,
       confidence: confidence,
       unmappedEntries: List.unmodifiable(stats.unmappedEntries),
@@ -163,6 +215,8 @@ class PdfExtractionService {
     TaxRecord record,
     _ParseStats stats, {
     required bool keepUnknownAsSundry,
+    required Map<String, String> customIncomeMappings,
+    required Map<String, String> customExpenseMappings,
   }) {
     bool parsingIncome = false;
     bool parsingExpenses = false;
@@ -212,6 +266,8 @@ class PdfExtractionService {
               total,
               isIncome: parsingIncome,
               keepUnknownAsSundry: keepUnknownAsSundry,
+              customIncomeMappings: customIncomeMappings,
+              customExpenseMappings: customExpenseMappings,
             );
             expectsGst = false;
             currentCategory = null;
@@ -226,6 +282,8 @@ class PdfExtractionService {
               total,
               isIncome: parsingIncome,
               keepUnknownAsSundry: keepUnknownAsSundry,
+              customIncomeMappings: customIncomeMappings,
+              customExpenseMappings: customExpenseMappings,
             );
 
             if (nextHasGst) {
@@ -273,6 +331,8 @@ class PdfExtractionService {
     double amount, {
     required bool isIncome,
     required bool keepUnknownAsSundry,
+    required Map<String, String> customIncomeMappings,
+    required Map<String, String> customExpenseMappings,
   }) {
     if (amount == 0 || sourceCategory == null) {
       return;
@@ -280,7 +340,18 @@ class PdfExtractionService {
 
     stats.totalEntryCount += 1;
 
-    final mappedCategory = _mapCategory(sourceCategory, isIncome);
+    final mappedCategory = _mapCategory(
+      sourceCategory,
+      isIncome,
+      customIncomeMappings: customIncomeMappings,
+      customExpenseMappings: customExpenseMappings,
+    );
+    stats.lineItems.add({
+      'sourceCategory': sourceCategory,
+      'amount': amount,
+      'isIncome': isIncome,
+      'mappedCategory': mappedCategory ?? 'UNMAPPED',
+    });
     if (mappedCategory != null) {
       _addToCategory(record, mappedCategory, amount, isIncome: isIncome);
       stats.mappedEntryCount += 1;
@@ -302,8 +373,21 @@ class PdfExtractionService {
     );
   }
 
-  String? _mapCategory(String category, bool isIncome) {
+  String? _mapCategory(
+    String category,
+    bool isIncome, {
+    Map<String, String> customIncomeMappings = const {},
+    Map<String, String> customExpenseMappings = const {},
+  }) {
     final normalized = category.toLowerCase();
+    final customMappings = isIncome
+        ? customIncomeMappings
+        : customExpenseMappings;
+    for (final entry in customMappings.entries) {
+      if (normalized.contains(entry.key.toLowerCase())) {
+        return entry.value;
+      }
+    }
 
     if (isIncome) {
       if (normalized.contains('rent')) {

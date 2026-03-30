@@ -1,11 +1,15 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/tax_record.dart';
 import '../services/auth_service.dart';
+import '../services/draft_sync_service.dart';
+import '../services/export_service.dart';
 import '../services/firestore_service.dart';
 import '../services/pdf_extraction_service.dart';
+import '../utils/file_exporter.dart';
 import 'comparison_screen.dart';
 import 'worksheet_screen.dart';
 
@@ -31,8 +35,15 @@ class _HomeScreenState extends State<HomeScreen> {
   late final AuthService _authService;
   late final FirestoreService _firestoreService;
   late final PdfExtractionService _pdfExtractionService;
+  final ExportService _exportService = ExportService();
 
   bool _isProcessing = false;
+  bool _isSyncingDrafts = false;
+  String _selectedPropertyId = 'default';
+  String _selectedPropertyName = 'Primary Property';
+  List<TaxRecord> _latestRecords = const [];
+  Map<String, String> _customIncomeMappings = const {};
+  Map<String, String> _customExpenseMappings = const {};
 
   @override
   void initState() {
@@ -41,6 +52,62 @@ class _HomeScreenState extends State<HomeScreen> {
     _firestoreService = widget.firestoreService ?? FirestoreService();
     _pdfExtractionService =
         widget.pdfExtractionService ?? PdfExtractionService();
+    _loadCustomMappings();
+    _syncQueuedDrafts();
+    _ensureDefaultPropertyExists();
+  }
+
+  Future<void> _ensureDefaultPropertyExists() async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      return;
+    }
+    try {
+      await _firestoreService.saveProperty(
+        user.uid,
+        const PropertyInfo(id: 'default', name: 'Primary Property'),
+      );
+    } catch (_) {
+      // Some tests/mock services do not implement property persistence.
+    }
+  }
+
+  Future<void> _loadCustomMappings() async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      return;
+    }
+    Map<String, Map<String, String>> mappings;
+    try {
+      mappings = await _firestoreService.getCustomMappings(user.uid);
+    } catch (_) {
+      mappings = const {'income': {}, 'expense': {}};
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _customIncomeMappings = mappings['income'] ?? const {};
+      _customExpenseMappings = mappings['expense'] ?? const {};
+    });
+  }
+
+  Future<void> _syncQueuedDrafts() async {
+    if (_isSyncingDrafts) {
+      return;
+    }
+    setState(() {
+      _isSyncingDrafts = true;
+    });
+    final synced = await DraftSyncService.instance.syncAll(_firestoreService);
+    if (mounted && synced > 0) {
+      _showSnackBar('Synced $synced offline draft(s).');
+    }
+    if (mounted) {
+      setState(() {
+        _isSyncingDrafts = false;
+      });
+    }
   }
 
   Future<void> _pickAndProcessPdf() async {
@@ -86,9 +153,23 @@ class _HomeScreenState extends State<HomeScreen> {
         bytes,
         refreshedUser.uid,
         selectedYear,
+        propertyId: _selectedPropertyId,
+        propertyName: _selectedPropertyName,
+        sourceFileName: file.name,
+        customIncomeMappings: _customIncomeMappings,
+        customExpenseMappings: _customExpenseMappings,
       );
+
       final reviewedRecord = await _showImportPreviewDialog(preview);
       if (reviewedRecord == null || !mounted) {
+        return;
+      }
+
+      final continueImport = await _showOverwriteDiffIfNeeded(
+        refreshedUser.uid,
+        reviewedRecord,
+      );
+      if (!continueImport || !mounted) {
         return;
       }
 
@@ -117,6 +198,293 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  Future<bool> _showOverwriteDiffIfNeeded(
+    String userId,
+    TaxRecord candidate,
+  ) async {
+    final existing = await _firestoreService.findRecordByYear(
+      userId,
+      candidate.financialYear,
+      propertyId: candidate.propertyId,
+    );
+
+    if (existing == null || !mounted) {
+      return true;
+    }
+
+    final diffs = <String>[];
+    if (existing.totalIncome != candidate.totalIncome) {
+      diffs.add(
+        'Income: \$${existing.totalIncome.toStringAsFixed(2)} -> \$${candidate.totalIncome.toStringAsFixed(2)}',
+      );
+    }
+    if (existing.totalExpenses != candidate.totalExpenses) {
+      diffs.add(
+        'Expenses: \$${existing.totalExpenses.toStringAsFixed(2)} -> \$${candidate.totalExpenses.toStringAsFixed(2)}',
+      );
+    }
+    if (existing.lineItems.length != candidate.lineItems.length) {
+      diffs.add(
+        'Transaction line items: ${existing.lineItems.length} -> ${candidate.lineItems.length}',
+      );
+    }
+
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text('Existing Record Found', style: GoogleFonts.inter()),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'FY ${candidate.financialYear} already exists for ${candidate.propertyName}.',
+                    style: GoogleFonts.inter(),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Potential changes:',
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  if (diffs.isEmpty)
+                    Text(
+                      'No numeric difference detected.',
+                      style: GoogleFonts.inter(),
+                    )
+                  else
+                    ...diffs.map(
+                      (diff) => Text('• $diff', style: GoogleFonts.inter()),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Continue'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _showMappingRulesDialog() async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      _showSnackBar('Please sign in again.');
+      return;
+    }
+
+    final incomeController = TextEditingController(
+      text: _customIncomeMappings.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('\n'),
+    );
+    final expenseController = TextEditingController(
+      text: _customExpenseMappings.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('\n'),
+    );
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Custom Mapping Rules', style: GoogleFonts.inter()),
+        content: SizedBox(
+          width: 620,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Format: keyword=ATO Category', style: GoogleFonts.inter()),
+              const SizedBox(height: 10),
+              Text(
+                'Income Rules',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: incomeController,
+                maxLines: 6,
+                decoration: const InputDecoration(border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Expense Rules',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: expenseController,
+                maxLines: 8,
+                decoration: const InputDecoration(border: OutlineInputBorder()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (saved != true) {
+      return;
+    }
+
+    final income = _parseMappings(incomeController.text);
+    final expense = _parseMappings(expenseController.text);
+
+    await _firestoreService.saveCustomMappings(user.uid, income, expense);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _customIncomeMappings = income;
+      _customExpenseMappings = expense;
+    });
+
+    _showSnackBar('Custom mappings saved.');
+  }
+
+  Map<String, String> _parseMappings(String text) {
+    final mappings = <String, String>{};
+    final lines = text.split('\n');
+    for (final line in lines) {
+      if (!line.contains('=')) {
+        continue;
+      }
+      final split = line.split('=');
+      if (split.length < 2) {
+        continue;
+      }
+      final key = split.first.trim();
+      final value = split.sublist(1).join('=').trim();
+      if (key.isEmpty || value.isEmpty) {
+        continue;
+      }
+      mappings[key] = value;
+    }
+    return mappings;
+  }
+
+  Future<void> _showAddPropertyDialog() async {
+    final user = _authService.currentUser;
+    if (user == null) {
+      return;
+    }
+    final controller = TextEditingController();
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add Property', style: GoogleFonts.inter()),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Property Name',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+
+    if (created != true) {
+      return;
+    }
+
+    final name = controller.text.trim();
+    if (name.isEmpty) {
+      return;
+    }
+
+    final id = name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    await _firestoreService.saveProperty(
+      user.uid,
+      PropertyInfo(id: id, name: name),
+    );
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedPropertyId = id;
+      _selectedPropertyName = name;
+    });
+  }
+
+  Future<void> _exportCsv({bool excelFriendly = false}) async {
+    if (_latestRecords.isEmpty) {
+      _showSnackBar('No records to export.');
+      return;
+    }
+
+    final content = excelFriendly
+        ? _exportService.buildExcelFriendlyContent(_latestRecords)
+        : _exportService.buildCsv(_latestRecords);
+
+    final saved = await saveTextFile(
+      '${_selectedPropertyId}_${excelFriendly ? 'excel' : 'records'}.csv',
+      content,
+    );
+
+    if (!saved && mounted) {
+      await Clipboard.setData(ClipboardData(text: content));
+      _showSnackBar('Export copied to clipboard (save dialog unavailable).');
+      return;
+    }
+
+    _showSnackBar(
+      excelFriendly ? 'Excel-friendly CSV exported.' : 'CSV exported.',
+    );
+  }
+
+  Future<void> _exportSummaryPdf() async {
+    if (_latestRecords.isEmpty) {
+      _showSnackBar('No records to export.');
+      return;
+    }
+
+    final bytes = _exportService.buildSummaryPdf(
+      _latestRecords,
+      title: 'Tax Summary - $_selectedPropertyName',
+    );
+    final saved = await saveBinaryFile(
+      '${_selectedPropertyId}_summary.pdf',
+      bytes,
+    );
+    if (!saved) {
+      _showSnackBar('Unable to save PDF on this platform.');
+      return;
+    }
+    _showSnackBar('Summary PDF exported.');
   }
 
   Future<String?> _showYearDialog() {
@@ -242,6 +610,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text(
                         'Confidence: $confidencePercent% (${preview.mappedEntryCount}/${preview.totalEntryCount} mapped)',
                         style: GoogleFonts.inter(),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Parsed transactions: ${preview.record.lineItems.length}',
+                        style: GoogleFonts.inter(color: Colors.grey[700]),
                       ),
                       const SizedBox(height: 12),
                       if (preview.unmappedEntries.isEmpty)
@@ -419,20 +792,59 @@ class _HomeScreenState extends State<HomeScreen> {
           style: GoogleFonts.inter(fontWeight: FontWeight.w600),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            tooltip: 'Trends & Comparison',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ComparisonScreen(
-                    firestoreService: _firestoreService,
-                    userId: user?.uid,
-                  ),
-                ),
-              );
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'compare':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ComparisonScreen(
+                        firestoreService: _firestoreService,
+                        userId: user?.uid,
+                        propertyId: _selectedPropertyId,
+                        propertyName: _selectedPropertyName,
+                      ),
+                    ),
+                  );
+                  break;
+                case 'csv':
+                  _exportCsv();
+                  break;
+                case 'excel':
+                  _exportCsv(excelFriendly: true);
+                  break;
+                case 'pdf':
+                  _exportSummaryPdf();
+                  break;
+                case 'mapping':
+                  _showMappingRulesDialog();
+                  break;
+                case 'property':
+                  _showAddPropertyDialog();
+                  break;
+                case 'sync':
+                  _syncQueuedDrafts();
+                  break;
+                default:
+                  break;
+              }
             },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'compare',
+                child: Text('Trends & Comparison'),
+              ),
+              PopupMenuItem(value: 'csv', child: Text('Export CSV')),
+              PopupMenuItem(value: 'excel', child: Text('Export Excel CSV')),
+              PopupMenuItem(value: 'pdf', child: Text('Export Summary PDF')),
+              PopupMenuItem(
+                value: 'mapping',
+                child: Text('Custom Mapping Rules'),
+              ),
+              PopupMenuItem(value: 'property', child: Text('Add Property')),
+              PopupMenuItem(value: 'sync', child: Text('Sync Offline Drafts')),
+            ],
           ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -451,8 +863,30 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    _buildPropertySelector(user.uid),
+                    if (DraftSyncService.instance.hasPendingDrafts)
+                      Card(
+                        color: Colors.orange[50],
+                        child: ListTile(
+                          title: Text(
+                            '${DraftSyncService.instance.pendingDrafts.length} offline draft(s) pending sync.',
+                          ),
+                          trailing: _isSyncingDrafts
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : TextButton(
+                                  onPressed: _syncQueuedDrafts,
+                                  child: const Text('Sync now'),
+                                ),
+                        ),
+                      ),
                     _buildUploadSection(),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 24),
                     Text(
                       'Saved Records',
                       style: GoogleFonts.inter(
@@ -472,7 +906,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             );
                           }
 
-                          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                          final records = (snapshot.data ?? const [])
+                              .where(
+                                (record) =>
+                                    record.propertyId == _selectedPropertyId,
+                              )
+                              .toList();
+                          _latestRecords = records;
+
+                          if (records.isEmpty) {
                             return Center(
                               child: Text(
                                 'No records found. Upload a PDF to begin.',
@@ -483,7 +925,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             );
                           }
 
-                          final records = snapshot.data!;
                           return ListView.separated(
                             itemCount: records.length,
                             separatorBuilder: (_, _) =>
@@ -503,12 +944,84 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildPropertySelector(String userId) {
+    return StreamBuilder<List<PropertyInfo>>(
+      stream: _safePropertyStream(userId),
+      builder: (context, snapshot) {
+        final properties = snapshot.data ?? const [];
+        final options = properties.isEmpty
+            ? const [PropertyInfo(id: 'default', name: 'Primary Property')]
+            : properties;
+
+        final selectedExists = options.any((p) => p.id == _selectedPropertyId);
+        if (!selectedExists) {
+          _selectedPropertyId = options.first.id;
+          _selectedPropertyName = options.first.name;
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _selectedPropertyId,
+                  decoration: const InputDecoration(
+                    labelText: 'Property',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: options
+                      .map(
+                        (property) => DropdownMenuItem<String>(
+                          value: property.id,
+                          child: Text(property.name),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    final selected = options.firstWhere(
+                      (property) => property.id == value,
+                    );
+                    setState(() {
+                      _selectedPropertyId = selected.id;
+                      _selectedPropertyName = selected.name;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _showAddPropertyDialog,
+                icon: const Icon(Icons.add_home_outlined),
+                label: const Text('Add'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Stream<List<PropertyInfo>> _safePropertyStream(String userId) {
+    try {
+      return _firestoreService.getUserProperties(userId);
+    } catch (_) {
+      return Stream.value(const [
+        PropertyInfo(id: 'default', name: 'Primary Property'),
+      ]);
+    }
+  }
+
   Widget _buildUploadSection() {
     return InkWell(
       onTap: _isProcessing ? null : _pickAndProcessPdf,
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.05),
           border: Border.all(
@@ -525,10 +1038,10 @@ class _HomeScreenState extends State<HomeScreen> {
             else
               Icon(
                 Icons.upload_file_outlined,
-                size: 64,
+                size: 56,
                 color: Theme.of(context).colorScheme.primary,
               ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Text(
               _isProcessing
                   ? 'Extracting Data...'
@@ -539,9 +1052,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
-              'Supports Forge + generic property statement layouts',
+              'Supports Forge + generic layouts, with custom mapping rules',
               style: GoogleFonts.inter(fontSize: 14, color: Colors.grey[600]),
             ),
           ],
@@ -564,7 +1077,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         title: Text(
           'FY ${record.financialYear}',
-          style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 18),
+          style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16),
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 8.0),
@@ -573,6 +1086,12 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Text('Income: \$${record.totalIncome.toStringAsFixed(2)}'),
               Text('Expenses: \$${record.totalExpenses.toStringAsFixed(2)}'),
+              Text('Property: ${record.propertyName}'),
+              Text('Transactions: ${record.lineItems.length}'),
+              if (record.sourceFileName != null)
+                Text('Source: ${record.sourceFileName}'),
+              if (record.isLocked)
+                Text('Locked', style: TextStyle(color: Colors.orange[700])),
             ],
           ),
         ),

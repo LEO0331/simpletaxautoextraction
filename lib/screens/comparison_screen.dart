@@ -3,14 +3,23 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/tax_record.dart';
+import '../services/anomaly_service.dart';
 import '../services/firestore_service.dart';
 import 'auth_screen.dart';
 
 class ComparisonScreen extends StatefulWidget {
   final FirestoreService? firestoreService;
   final String? userId;
+  final String? propertyId;
+  final String? propertyName;
 
-  const ComparisonScreen({super.key, this.firestoreService, this.userId});
+  const ComparisonScreen({
+    super.key,
+    this.firestoreService,
+    this.userId,
+    this.propertyId,
+    this.propertyName,
+  });
 
   @override
   State<ComparisonScreen> createState() => _ComparisonScreenState();
@@ -18,6 +27,7 @@ class ComparisonScreen extends StatefulWidget {
 
 class _ComparisonScreenState extends State<ComparisonScreen> {
   late final FirestoreService _firestoreService;
+  final AnomalyService _anomalyService = AnomalyService();
 
   @override
   void initState() {
@@ -81,7 +91,14 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
               );
             }
 
-            final records = snapshot.data!;
+            final records = (snapshot.data ?? const <TaxRecord>[])
+                .where(
+                  (record) =>
+                      widget.propertyId == null ||
+                      record.propertyId == widget.propertyId,
+                )
+                .toList();
+            final anomalies = _anomalyService.detectYearlyAnomalies(records);
             // Sort records by financialYear ascending
             records.sort((a, b) => a.financialYear.compareTo(b.financialYear));
 
@@ -91,13 +108,41 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    'Income vs Expenses vs Net Position',
+                    'Income vs Expenses vs Net Position${widget.propertyName == null ? '' : ' (${widget.propertyName})'}',
                     style: GoogleFonts.inter(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                     ),
                     textAlign: TextAlign.center,
                   ),
+                  if (anomalies.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[50],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Anomaly Alerts',
+                            style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ...anomalies.map(
+                            (alert) => Text(
+                              '• $alert',
+                              style: GoogleFonts.inter(fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   _buildLegend(),
                   const SizedBox(height: 32),

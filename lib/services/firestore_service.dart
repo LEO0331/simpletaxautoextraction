@@ -11,6 +11,13 @@ class SaveTaxRecordResult {
   });
 }
 
+class PropertyInfo {
+  final String id;
+  final String name;
+
+  const PropertyInfo({required this.id, required this.name});
+}
+
 class FirestoreService {
   final FirebaseFirestore _db;
 
@@ -45,6 +52,7 @@ class FirestoreService {
 
     final duplicate = await colRef
         .where('financialYear', isEqualTo: financialYear)
+        .where('propertyId', isEqualTo: record.propertyId)
         .limit(1)
         .get();
 
@@ -84,6 +92,95 @@ class FirestoreService {
               .map((doc) => TaxRecord.fromMap(doc.data(), doc.id))
               .toList(),
         );
+  }
+
+  Future<TaxRecord?> findRecordByYear(
+    String userId,
+    String financialYear, {
+    String? propertyId,
+  }) async {
+    Query<Map<String, dynamic>> query = _db
+        .collection('users')
+        .doc(userId)
+        .collection('tax_records')
+        .where('financialYear', isEqualTo: financialYear);
+
+    if (propertyId != null && propertyId.isNotEmpty) {
+      query = query.where('propertyId', isEqualTo: propertyId);
+    }
+
+    final snapshot = await query.limit(1).get();
+    if (snapshot.docs.isEmpty) {
+      return null;
+    }
+    final doc = snapshot.docs.first;
+    return TaxRecord.fromMap(doc.data(), doc.id);
+  }
+
+  Future<void> saveCustomMappings(
+    String userId,
+    Map<String, String> incomeMappings,
+    Map<String, String> expenseMappings,
+  ) async {
+    await _db
+        .collection('users')
+        .doc(userId)
+        .collection('settings')
+        .doc('mappings')
+        .set({
+          'income': incomeMappings,
+          'expense': expenseMappings,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+  }
+
+  Future<Map<String, Map<String, String>>> getCustomMappings(
+    String userId,
+  ) async {
+    final doc = await _db
+        .collection('users')
+        .doc(userId)
+        .collection('settings')
+        .doc('mappings')
+        .get();
+
+    final data = doc.data() ?? {};
+    return {
+      'income': Map<String, String>.from(data['income'] ?? {}),
+      'expense': Map<String, String>.from(data['expense'] ?? {}),
+    };
+  }
+
+  Stream<List<PropertyInfo>> getUserProperties(String userId) {
+    return _db
+        .collection('users')
+        .doc(userId)
+        .collection('properties')
+        .orderBy('name')
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map(
+                (doc) => PropertyInfo(
+                  id: doc.id,
+                  name: doc.data()['name'] ?? 'Unnamed Property',
+                ),
+              )
+              .toList(),
+        );
+  }
+
+  Future<void> saveProperty(String userId, PropertyInfo property) async {
+    await _db
+        .collection('users')
+        .doc(userId)
+        .collection('properties')
+        .doc(property.id)
+        .set({
+          'name': property.name,
+          'updatedAt': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
   }
 
   Future<void> deleteTaxRecord(String userId, String recordId) async {
