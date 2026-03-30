@@ -10,6 +10,10 @@ class DraftSyncService {
   List<TaxRecord> get pendingDrafts => List.unmodifiable(_pendingDrafts);
   bool get hasPendingDrafts => _pendingDrafts.isNotEmpty;
 
+  void clearPendingDrafts() {
+    _pendingDrafts.clear();
+  }
+
   void queueDraft(TaxRecord record) {
     final existingIndex = _pendingDrafts.indexWhere(
       (draft) =>
