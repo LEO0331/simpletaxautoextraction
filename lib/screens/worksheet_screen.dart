@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
 import '../models/tax_record.dart';
 import '../services/firestore_service.dart';
 
@@ -7,13 +8,19 @@ class WorksheetScreen extends StatefulWidget {
   final TaxRecord record;
   final FirestoreService? firestoreService;
 
-  const WorksheetScreen({super.key, required this.record, this.firestoreService});
+  const WorksheetScreen({
+    super.key,
+    required this.record,
+    this.firestoreService,
+  });
 
   @override
   State<WorksheetScreen> createState() => _WorksheetScreenState();
 }
 
 class _WorksheetScreenState extends State<WorksheetScreen> {
+  static final RegExp _financialYearRegex = RegExp(r'^\d{4}-\d{4}$');
+
   late TaxRecord _activeRecord;
   late final FirestoreService _firestoreService;
   bool _isSaving = false;
@@ -39,24 +46,72 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
     });
   }
 
-  Future<void> _saveRecord() async {
+  Future<void> _saveRecord({bool saveAsNewYear = false}) async {
+    String? targetYear;
+    if (saveAsNewYear) {
+      targetYear = await _showSaveAsNewYearDialog();
+      if (targetYear == null) {
+        return;
+      }
+    }
+
     setState(() {
       _isSaving = true;
     });
+
     try {
-      await _firestoreService.saveTaxRecord(_activeRecord);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Tax Record saved successfully!')),
+      SaveTaxRecordResult result;
+      if (saveAsNewYear) {
+        result = await _firestoreService.saveTaxRecordWithStrategy(
+          _activeRecord,
+          saveAsNewYear: true,
+          overrideFinancialYear: targetYear,
         );
-        Navigator.of(context).pop(); // Go back to home
+      } else {
+        await _firestoreService.saveTaxRecord(_activeRecord);
+        result = SaveTaxRecordResult(
+          documentId: _activeRecord.id ?? '',
+          replacedExistingYear: false,
+        );
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _activeRecord = _activeRecord.copyWith(
+          id: result.documentId.isEmpty ? _activeRecord.id : result.documentId,
+          financialYear: targetYear ?? _activeRecord.financialYear,
+        );
+      });
+
+      final message = saveAsNewYear
+          ? 'Saved as FY ${targetYear ?? _activeRecord.financialYear}.'
+          : result.replacedExistingYear
+          ? 'Updated existing record for FY ${_activeRecord.financialYear}.'
+          : 'Tax record saved successfully!';
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+
+      if (!saveAsNewYear) {
+        Navigator.of(context).pop();
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving: $e')),
-        );
+      if (!mounted) {
+        return;
       }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving: $e'),
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: () => _saveRecord(saveAsNewYear: saveAsNewYear),
+          ),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -64,6 +119,79 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
         });
       }
     }
+  }
+
+  Future<String?> _showSaveAsNewYearDialog() {
+    final currentYearStart =
+        int.tryParse(_activeRecord.financialYear.split('-').first) ??
+        DateTime.now().year;
+    String inputYear = '${currentYearStart + 1}-${currentYearStart + 2}';
+    String? errorText;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(
+                'Save As New Financial Year',
+                style: GoogleFonts.inter(),
+              ),
+              content: SizedBox(
+                width: 360,
+                child: TextField(
+                  controller: TextEditingController(text: inputYear),
+                  onChanged: (value) {
+                    setDialogState(() {
+                      inputYear = value.trim();
+                      errorText = null;
+                    });
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Financial Year',
+                    hintText: 'YYYY-YYYY',
+                    border: const OutlineInputBorder(),
+                    errorText: errorText,
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, null),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final normalized = inputYear.trim();
+                    if (!_isValidFinancialYear(normalized)) {
+                      setDialogState(() {
+                        errorText =
+                            'Use YYYY-YYYY and ensure end year is start+1.';
+                      });
+                      return;
+                    }
+                    Navigator.pop(context, normalized);
+                  },
+                  child: const Text('Save Copy'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  bool _isValidFinancialYear(String value) {
+    if (!_financialYearRegex.hasMatch(value)) {
+      return false;
+    }
+    final years = value.split('-');
+    final start = int.tryParse(years[0]);
+    final end = int.tryParse(years[1]);
+    return start != null && end != null && end == start + 1;
   }
 
   @override
@@ -85,12 +213,18 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             )
-          else
+          else ...[
+            IconButton(
+              icon: const Icon(Icons.content_copy),
+              tooltip: 'Save As New Year',
+              onPressed: () => _saveRecord(saveAsNewYear: true),
+            ),
             IconButton(
               icon: const Icon(Icons.save),
               tooltip: 'Save Record',
               onPressed: _saveRecord,
             ),
+          ],
         ],
       ),
       body: SingleChildScrollView(
@@ -106,9 +240,10 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                 Text(
                   'Income',
                   style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green[800]),
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green[800],
+                  ),
                 ),
                 const SizedBox(height: 8),
                 _buildCategoryList(_activeRecord.income, _updateIncome),
@@ -116,9 +251,10 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                 Text(
                   'Expenses',
                   style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red[800]),
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red[800],
+                  ),
                 ),
                 const SizedBox(height: 8),
                 _buildCategoryList(_activeRecord.expenses, _updateExpense),
@@ -150,9 +286,10 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                 Text(
                   '\$${_activeRecord.totalIncome.toStringAsFixed(2)}',
                   style: GoogleFonts.inter(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.green[700]),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.green[700],
+                  ),
                 ),
               ],
             ),
@@ -164,9 +301,10 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                 Text(
                   '\$${_activeRecord.totalExpenses.toStringAsFixed(2)}',
                   style: GoogleFonts.inter(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.red[700]),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.red[700],
+                  ),
                 ),
               ],
             ),
@@ -174,9 +312,13 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Net Position',
-                    style: GoogleFonts.inter(
-                        fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(
+                  'Net Position',
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 Text(
                   '\$${_activeRecord.netPosition.toStringAsFixed(2)}',
                   style: GoogleFonts.inter(
@@ -196,7 +338,9 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
   }
 
   Widget _buildCategoryList(
-      Map<String, double> categories, Function(String, String) onChanged) {
+    Map<String, double> categories,
+    Function(String, String) onChanged,
+  ) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -215,21 +359,22 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
               children: [
                 Expanded(
                   flex: 3,
-                  child: Text(
-                    category,
-                    style: GoogleFonts.inter(fontSize: 14),
-                  ),
+                  child: Text(category, style: GoogleFonts.inter(fontSize: 14)),
                 ),
                 Expanded(
                   flex: 1,
                   child: TextFormField(
                     initialValue: value == 0.0 ? '' : value.toStringAsFixed(2),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: InputDecoration(
                       prefixText: '\$ ',
                       isDense: true,
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),

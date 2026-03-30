@@ -5,7 +5,7 @@ import '../services/auth_service.dart';
 
 class AuthScreen extends StatefulWidget {
   final AuthService? authService;
-  
+
   const AuthScreen({super.key, this.authService});
 
   @override
@@ -14,12 +14,13 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   late final AuthService _authService;
-  
+
   @override
   void initState() {
     super.initState();
     _authService = widget.authService ?? AuthService();
   }
+
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLogin = true;
@@ -35,10 +36,14 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       if (_isLogin) {
         await _authService.signInWithEmailPassword(
-            _emailController.text, _passwordController.text);
+          _emailController.text,
+          _passwordController.text,
+        );
       } else {
         await _authService.createUserWithEmailPassword(
-            _emailController.text, _passwordController.text);
+          _emailController.text,
+          _passwordController.text,
+        );
       }
     } on FirebaseAuthException catch (e) {
       setState(() {
@@ -79,7 +84,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
+                    color: Colors.black.withValues(alpha: 0.05),
                     blurRadius: 20,
                     offset: const Offset(0, 10),
                   ),

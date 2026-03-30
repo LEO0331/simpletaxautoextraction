@@ -1,165 +1,406 @@
 import 'package:flutter/foundation.dart';
-import 'package:meta/meta.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../models/tax_record.dart';
 
+class UnmappedExtractionEntry {
+  final String sourceCategory;
+  final double amount;
+  final bool isIncome;
+
+  const UnmappedExtractionEntry({
+    required this.sourceCategory,
+    required this.amount,
+    required this.isIncome,
+  });
+}
+
+class PdfExtractionResult {
+  final TaxRecord record;
+  final String parserName;
+  final double confidence;
+  final List<UnmappedExtractionEntry> unmappedEntries;
+  final int mappedEntryCount;
+  final int totalEntryCount;
+
+  const PdfExtractionResult({
+    required this.record,
+    required this.parserName,
+    required this.confidence,
+    required this.unmappedEntries,
+    required this.mappedEntryCount,
+    required this.totalEntryCount,
+  });
+}
+
+class _ParseStats {
+  int mappedEntryCount = 0;
+  int totalEntryCount = 0;
+  final List<UnmappedExtractionEntry> unmappedEntries = [];
+}
+
+class _ParserLayout {
+  final String name;
+  final List<String> incomeHeaders;
+  final List<String> expenseHeaders;
+  final List<String> stopHeaders;
+
+  const _ParserLayout({
+    required this.name,
+    required this.incomeHeaders,
+    required this.expenseHeaders,
+    required this.stopHeaders,
+  });
+}
+
 class PdfExtractionService {
-  /// Extracts text from a simple PDF and maps it to a TaxRecord
+  static const _forgeLayout = _ParserLayout(
+    name: 'Forge Real Estate',
+    incomeHeaders: ['Property Income'],
+    expenseHeaders: ['Property Expenses'],
+    stopHeaders: ['(GST Total:', 'PROPERTY BALANCE:', 'Owner Statement'],
+  );
+
+  static const _genericLayout = _ParserLayout(
+    name: 'Generic Property Statement',
+    incomeHeaders: ['Income', 'Rental Income'],
+    expenseHeaders: ['Expenses', 'Rental Expenses'],
+    stopHeaders: ['PROPERTY BALANCE:', 'Statement Summary', 'Owner Statement'],
+  );
+
+  /// Backward-compatible API used across the app/tests.
   Future<TaxRecord> extractFromPdf(
-      List<int> bytes, String userId, String financialYear) async {
+    List<int> bytes,
+    String userId,
+    String financialYear,
+  ) async {
+    final result = await extractPreviewFromPdf(bytes, userId, financialYear);
+    return result.record;
+  }
+
+  /// Returns parser metadata for import preview and manual mapping.
+  Future<PdfExtractionResult> extractPreviewFromPdf(
+    List<int> bytes,
+    String userId,
+    String financialYear,
+  ) async {
     try {
       final document = PdfDocument(inputBytes: bytes);
       final textExtractor = PdfTextExtractor(document);
-      String extractedText = textExtractor.extractText();
+      final extractedText = textExtractor.extractText();
       document.dispose();
 
-      return parseExtractedText(extractedText, userId, financialYear);
+      return parseExtractedTextWithMetadata(
+        extractedText,
+        userId,
+        financialYear,
+      );
     } catch (e) {
       debugPrint('Error extracting PDF: $e');
       rethrow;
     }
   }
 
-  @visibleForTesting
   TaxRecord parseExtractedText(
-      String text, String userId, String financialYear) {
-    // Start with an empty ATO template
+    String text,
+    String userId,
+    String financialYear,
+  ) {
+    return parseExtractedTextWithMetadata(
+      text,
+      userId,
+      financialYear,
+      keepUnknownAsSundry: true,
+    ).record;
+  }
+
+  @visibleForTesting
+  PdfExtractionResult parseExtractedTextWithMetadata(
+    String text,
+    String userId,
+    String financialYear, {
+    bool keepUnknownAsSundry = false,
+  }) {
+    final lines = text.split('\n').map((line) => line.trim()).toList();
+    final layout = _pickLayout(lines);
+    final stats = _ParseStats();
     final record = TaxRecord.empty(userId, financialYear);
 
-    final lines = text.split('\n').map((e) => e.trim()).toList();
+    _parseWithLayout(
+      lines,
+      layout,
+      record,
+      stats,
+      keepUnknownAsSundry: keepUnknownAsSundry,
+    );
 
+    final confidence = stats.totalEntryCount == 0
+        ? 0.0
+        : stats.mappedEntryCount / stats.totalEntryCount;
+
+    return PdfExtractionResult(
+      record: record,
+      parserName: layout.name,
+      confidence: confidence,
+      unmappedEntries: List.unmodifiable(stats.unmappedEntries),
+      mappedEntryCount: stats.mappedEntryCount,
+      totalEntryCount: stats.totalEntryCount,
+    );
+  }
+
+  _ParserLayout _pickLayout(List<String> lines) {
+    final hasForgeIncome = lines.contains(_forgeLayout.incomeHeaders.first);
+    final hasForgeExpense = lines.contains(_forgeLayout.expenseHeaders.first);
+    if (hasForgeIncome || hasForgeExpense) {
+      return _forgeLayout;
+    }
+
+    return _genericLayout;
+  }
+
+  void _parseWithLayout(
+    List<String> lines,
+    _ParserLayout layout,
+    TaxRecord record,
+    _ParseStats stats, {
+    required bool keepUnknownAsSundry,
+  }) {
     bool parsingIncome = false;
     bool parsingExpenses = false;
 
     String? currentCategory;
-    List<double> currentValues = []; // Expecting [Debit, Credit, Total]
+    final currentValues = <double>[]; // [Debit, Credit, Total]
     bool expectsGst = false;
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
 
-      if (line == 'Property Income') {
+      if (_matchesHeader(line, layout.incomeHeaders)) {
         parsingIncome = true;
         parsingExpenses = false;
         continue;
-      } else if (line == 'Property Expenses') {
+      }
+
+      if (_matchesHeader(line, layout.expenseHeaders)) {
         parsingIncome = false;
         parsingExpenses = true;
         continue;
-      } else if (line.startsWith('(GST Total:') ||
-          line.startsWith('PROPERTY BALANCE:')) {
+      }
+
+      if (_matchesPrefix(line, layout.stopHeaders)) {
         if (parsingIncome) {
           parsingIncome = false;
         } else if (parsingExpenses) {
-          parsingExpenses = false;
-          // After Property Expenses and its GST total, usually we hit Property Balance or Owner ...
-          break; // Optimization: we don't need to parse the rest of the Owner section unless necessary
+          break;
         }
       }
 
-      if (!parsingIncome && !parsingExpenses) continue;
+      if (!parsingIncome && !parsingExpenses) {
+        continue;
+      }
 
-      // Check if line is a currency line
-      if (line.startsWith('\$')) {
-        final val = _parseCurrency(line);
-        if (val != null) {
-          currentValues.add(val);
+      final currency = _parseCurrency(line);
+      if (currency != null) {
+        currentValues.add(currency);
+        if (currentValues.length == 3 && currentCategory != null) {
+          final total = currentValues[2];
 
-          // In this specific PDF, values are grouped in threes: Debit, Credit, Total.
-          // Then potentially GST values.
-          if (currentValues.length == 3 && currentCategory != null) {
-            final total = currentValues[2]; // The third value is "Total"
-            
-            if (expectsGst) {
-              // Add GST total to our previous category mapped value if necessary 
-              // (usually we map the full value including GST for deductions, subject to user's GST registration)
-              // Let's assume standard residential landlords add GST to the total expense.
-              addValueToAtoCategory(record, currentCategory!, total,
-                  isIncome: parsingIncome);
-              expectsGst = false;
-              currentCategory = null;
+          if (expectsGst) {
+            _applyAmount(
+              record,
+              stats,
+              currentCategory,
+              total,
+              isIncome: parsingIncome,
+              keepUnknownAsSundry: keepUnknownAsSundry,
+            );
+            expectsGst = false;
+            currentCategory = null;
+            currentValues.clear();
+          } else {
+            final nextHasGst =
+                i + 1 < lines.length && lines[i + 1].contains('+ GST');
+            _applyAmount(
+              record,
+              stats,
+              currentCategory,
+              total,
+              isIncome: parsingIncome,
+              keepUnknownAsSundry: keepUnknownAsSundry,
+            );
+
+            if (nextHasGst) {
+              expectsGst = true;
               currentValues.clear();
             } else {
-              // Look ahead to see if the next line is "   + GST"
-              if (i + 1 < lines.length && lines[i + 1].contains('+ GST')) {
-                expectsGst = true;
-                // Save the base total to be added with the GST total later, 
-                // but actually it's easier to just add them as we see them.
-                addValueToAtoCategory(record, currentCategory!, total,
-                    isIncome: parsingIncome);
-                currentValues.clear(); // Clear to collect the 3 GST values
-              } else {
-                // No GST follows, commit the total
-                addValueToAtoCategory(record, currentCategory!, total,
-                    isIncome: parsingIncome);
-                currentCategory = null;
-                currentValues.clear();
-              }
+              currentCategory = null;
+              currentValues.clear();
             }
           }
         }
       } else if (line.isNotEmpty && !line.contains('+ GST')) {
-        // Assume non-empty, non-currency, non-GST lines are category headers
         currentCategory = line;
         currentValues.clear();
         expectsGst = false;
       }
     }
-
-    return record;
   }
 
-  double? _parseCurrency(String val) {
-    try {
-      final cleaned = val.replaceAll('\$', '').replaceAll(',', '').trim();
-      return double.tryParse(cleaned);
-    } catch (_) {
+  bool _matchesHeader(String line, List<String> headers) {
+    return headers.any((header) => line == header);
+  }
+
+  bool _matchesPrefix(String line, List<String> prefixes) {
+    return prefixes.any((prefix) => line.startsWith(prefix));
+  }
+
+  double? _parseCurrency(String raw) {
+    if (!raw.contains(r'$')) {
       return null;
     }
+    final cleaned = raw
+        .replaceAll(r'$', '')
+        .replaceAll(',', '')
+        .replaceAll('(', '-')
+        .replaceAll(')', '')
+        .trim();
+    return double.tryParse(cleaned);
   }
 
-  /// Maps the Forge Real Estate category to ATO Worksheet Category
-  @visibleForTesting
-  void addValueToAtoCategory(TaxRecord record, String category, double amount,
-      {required bool isIncome}) {
-    if (amount == 0) return;
+  void _applyAmount(
+    TaxRecord record,
+    _ParseStats stats,
+    String? sourceCategory,
+    double amount, {
+    required bool isIncome,
+    required bool keepUnknownAsSundry,
+  }) {
+    if (amount == 0 || sourceCategory == null) {
+      return;
+    }
+
+    stats.totalEntryCount += 1;
+
+    final mappedCategory = _mapCategory(sourceCategory, isIncome);
+    if (mappedCategory != null) {
+      _addToCategory(record, mappedCategory, amount, isIncome: isIncome);
+      stats.mappedEntryCount += 1;
+      return;
+    }
+
+    if (keepUnknownAsSundry && !isIncome) {
+      _addToCategory(record, 'Sundry rental expenses', amount, isIncome: false);
+      stats.mappedEntryCount += 1;
+      return;
+    }
+
+    stats.unmappedEntries.add(
+      UnmappedExtractionEntry(
+        sourceCategory: sourceCategory,
+        amount: amount,
+        isIncome: isIncome,
+      ),
+    );
+  }
+
+  String? _mapCategory(String category, bool isIncome) {
+    final normalized = category.toLowerCase();
 
     if (isIncome) {
-      if (category.toLowerCase().contains('rent')) {
-        record.income['Gross rent'] =
-            (record.income['Gross rent'] ?? 0.0) + amount;
-      } else {
-        record.income['Other rental-related income'] =
-            (record.income['Other rental-related income'] ?? 0.0) + amount;
+      if (normalized.contains('rent')) {
+        return 'Gross rent';
       }
-    } else {
-      category = category.toLowerCase();
-      if (category.contains('administration fee') ||
-          category.contains('letting fee') ||
-          category.contains('management fee')) {
-        record.expenses['Property agent fees and commission'] =
-            (record.expenses['Property agent fees and commission'] ?? 0.0) +
-                amount;
-      } else if (category.contains('repair') ||
-          category.contains('maintenance')) {
-        record.expenses['Repairs and maintenance'] =
-            (record.expenses['Repairs and maintenance'] ?? 0.0) + amount;
-      } else if (category.contains('insurance')) {
-        record.expenses['Insurance'] =
-            (record.expenses['Insurance'] ?? 0.0) + amount;
-      } else if (category.contains('council')) {
-        record.expenses['Council rates'] =
-            (record.expenses['Council rates'] ?? 0.0) + amount;
-      } else if (category.contains('water') || category.contains('rates')) {
-        record.expenses['Water charges'] =
-            (record.expenses['Water charges'] ?? 0.0) + amount;
-      } else if (category.contains('interest')) {
-        record.expenses['Interest on loans'] =
-            (record.expenses['Interest on loans'] ?? 0.0) + amount;
-      } else {
-        record.expenses['Sundry rental expenses'] =
-            (record.expenses['Sundry rental expenses'] ?? 0.0) + amount;
+      if (normalized.contains('income') ||
+          normalized.contains('reimburse') ||
+          normalized.contains('water')) {
+        return 'Other rental-related income';
       }
+      return null;
     }
+
+    if (normalized.contains('administration fee') ||
+        normalized.contains('letting fee') ||
+        normalized.contains('management fee') ||
+        normalized.contains('agent')) {
+      return 'Property agent fees and commission';
+    }
+    if (normalized.contains('repair') || normalized.contains('maintenance')) {
+      return 'Repairs and maintenance';
+    }
+    if (normalized.contains('insurance')) {
+      return 'Insurance';
+    }
+    if (normalized.contains('council')) {
+      return 'Council rates';
+    }
+    if (normalized.contains('water')) {
+      return 'Water charges';
+    }
+    if (normalized.contains('interest')) {
+      return 'Interest on loans';
+    }
+    if (normalized.contains('clean')) {
+      return 'Cleaning';
+    }
+    if (normalized.contains('garden') || normalized.contains('lawn')) {
+      return 'Gardening and lawn mowing';
+    }
+    if (normalized.contains('advertis')) {
+      return 'Advertising for tenants';
+    }
+    if (normalized.contains('body corporate')) {
+      return 'Body corporate fees and charges';
+    }
+    if (normalized.contains('legal')) {
+      return 'Legal expenses';
+    }
+    if (normalized.contains('land tax')) {
+      return 'Land tax';
+    }
+
+    return null;
+  }
+
+  void _addToCategory(
+    TaxRecord record,
+    String category,
+    double amount, {
+    required bool isIncome,
+  }) {
+    if (isIncome) {
+      record.income[category] = (record.income[category] ?? 0.0) + amount;
+    } else {
+      record.expenses[category] = (record.expenses[category] ?? 0.0) + amount;
+    }
+  }
+
+  /// Maps category to ATO worksheet and defaults unknown expense lines to sundry.
+  @visibleForTesting
+  void addValueToAtoCategory(
+    TaxRecord record,
+    String category,
+    double amount, {
+    required bool isIncome,
+  }) {
+    if (amount == 0) {
+      return;
+    }
+
+    final mapped = _mapCategory(category, isIncome);
+    if (mapped != null) {
+      _addToCategory(record, mapped, amount, isIncome: isIncome);
+      return;
+    }
+
+    if (isIncome) {
+      _addToCategory(
+        record,
+        'Other rental-related income',
+        amount,
+        isIncome: true,
+      );
+      return;
+    }
+
+    _addToCategory(record, 'Sundry rental expenses', amount, isIncome: false);
   }
 }

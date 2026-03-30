@@ -34,12 +34,7 @@ void main() {
 
       test('parses Water Rates as Other rental-related income', () async {
         final simulatedText = _buildSimulatedPdfText(
-          incomeLines: [
-            'Water Rates',
-            '\$0.00',
-            '\$76.41',
-            '\$76.41',
-          ],
+          incomeLines: ['Water Rates', '\$0.00', '\$76.41', '\$76.41'],
           expenseLines: [],
         );
 
@@ -89,8 +84,10 @@ void main() {
 
         final record = await _extractFromSimulatedText(simulatedText);
 
-        expect(record.expenses['Property agent fees and commission'],
-            closeTo(6.60, 0.01));
+        expect(
+          record.expenses['Property agent fees and commission'],
+          closeTo(6.60, 0.01),
+        );
       });
 
       test('maps Landlord Insurance to Insurance', () async {
@@ -130,8 +127,10 @@ void main() {
 
         final record = await _extractFromSimulatedText(simulatedText);
 
-        expect(record.expenses['Repairs and maintenance'],
-            closeTo(99.00, 0.01));
+        expect(
+          record.expenses['Repairs and maintenance'],
+          closeTo(99.00, 0.01),
+        );
       });
 
       test('maps Letting Fee to agent fees', () async {
@@ -151,8 +150,10 @@ void main() {
 
         final record = await _extractFromSimulatedText(simulatedText);
 
-        expect(record.expenses['Property agent fees and commission'],
-            closeTo(605.03, 0.01));
+        expect(
+          record.expenses['Property agent fees and commission'],
+          closeTo(605.03, 0.01),
+        );
       });
 
       test('maps Residential Management Fee to agent fees', () async {
@@ -172,8 +173,10 @@ void main() {
 
         final record = await _extractFromSimulatedText(simulatedText);
 
-        expect(record.expenses['Property agent fees and commission'],
-            closeTo(394.35, 0.01));
+        expect(
+          record.expenses['Property agent fees and commission'],
+          closeTo(394.35, 0.01),
+        );
       });
     });
 
@@ -189,12 +192,16 @@ void main() {
 
         // Expenses (base + GST)
         expect(record.expenses['Insurance'], closeTo(317.00, 0.01));
-        expect(record.expenses['Repairs and maintenance'],
-            closeTo(99.00, 0.01));
+        expect(
+          record.expenses['Repairs and maintenance'],
+          closeTo(99.00, 0.01),
+        );
 
         // Agent fees = Admin(6+0.60) + Letting(550.03+55) + Management(358.50+35.85)
-        expect(record.expenses['Property agent fees and commission'],
-            closeTo(1005.98, 0.01));
+        expect(
+          record.expenses['Property agent fees and commission'],
+          closeTo(1005.98, 0.01),
+        );
 
         expect(record.totalExpenses, closeTo(1421.98, 0.01));
         expect(record.netPosition, closeTo(12994.43, 0.01));
@@ -202,12 +209,7 @@ void main() {
 
       test('zero-value income items do not inflate totals', () async {
         final simulatedText = _buildSimulatedPdfText(
-          incomeLines: [
-            'Residential Rent',
-            '\$0.00',
-            '\$0.00',
-            '\$0.00',
-          ],
+          incomeLines: ['Residential Rent', '\$0.00', '\$0.00', '\$0.00'],
           expenseLines: [],
         );
 
@@ -244,12 +246,7 @@ void main() {
         // Some PDFs might not have GST lines
         final simulatedText = _buildSimulatedPdfText(
           incomeLines: [],
-          expenseLines: [
-            'Council Rates',
-            '\$1,200.00',
-            '\$0.00',
-            '\$1,200.00',
-          ],
+          expenseLines: ['Council Rates', '\$1,200.00', '\$0.00', '\$1,200.00'],
         );
 
         final record = await _extractFromSimulatedText(simulatedText);
@@ -391,7 +388,10 @@ class _TestablePdfService extends PdfExtractionService {
 
   // Exact copy of the private method, exposed for testing
   dynamic _parseExtractedTextPublic(
-      String text, String userId, String financialYear) {
+    String text,
+    String userId,
+    String financialYear,
+  ) {
     final record = _emptyRecord(userId, financialYear);
     final lines = text.split('\n').map((e) => e.trim()).toList();
 
@@ -430,21 +430,34 @@ class _TestablePdfService extends PdfExtractionService {
           currentValues.add(val);
           if (currentValues.length == 3 && currentCategory != null) {
             final total = currentValues[2];
+            final category = currentCategory;
             if (expectsGst) {
-              _addValueToAtoCategoryPublic(record, currentCategory!, total,
-                  isIncome: parsingIncome);
+              _addValueToAtoCategoryPublic(
+                record,
+                category,
+                total,
+                isIncome: parsingIncome,
+              );
               expectsGst = false;
               currentCategory = null;
               currentValues.clear();
             } else {
               if (i + 1 < lines.length && lines[i + 1].contains('+ GST')) {
                 expectsGst = true;
-                _addValueToAtoCategoryPublic(record, currentCategory!, total,
-                    isIncome: parsingIncome);
+                _addValueToAtoCategoryPublic(
+                  record,
+                  category,
+                  total,
+                  isIncome: parsingIncome,
+                );
                 currentValues.clear();
               } else {
-                _addValueToAtoCategoryPublic(record, currentCategory!, total,
-                    isIncome: parsingIncome);
+                _addValueToAtoCategoryPublic(
+                  record,
+                  category,
+                  total,
+                  isIncome: parsingIncome,
+                );
                 currentCategory = null;
                 currentValues.clear();
               }
@@ -466,9 +479,12 @@ class _TestablePdfService extends PdfExtractionService {
     return double.tryParse(cleaned);
   }
 
-  void _addValueToAtoCategoryPublic(dynamic record, String category,
-      double amount,
-      {required bool isIncome}) {
+  void _addValueToAtoCategoryPublic(
+    dynamic record,
+    String category,
+    double amount, {
+    required bool isIncome,
+  }) {
     if (amount == 0) return;
 
     if (isIncome) {
@@ -486,7 +502,7 @@ class _TestablePdfService extends PdfExtractionService {
           cat.contains('management fee')) {
         record.expenses['Property agent fees and commission'] =
             (record.expenses['Property agent fees and commission'] ?? 0.0) +
-                amount;
+            amount;
       } else if (cat.contains('repair') || cat.contains('maintenance')) {
         record.expenses['Repairs and maintenance'] =
             (record.expenses['Repairs and maintenance'] ?? 0.0) + amount;
@@ -521,32 +537,27 @@ class _SimpleRecord {
   final Map<String, double> income;
   final Map<String, double> expenses;
 
-  _SimpleRecord({
-    required this.userId,
-    required this.financialYear,
-  })  : income = {
-          'Gross rent': 0.0,
-          'Other rental-related income': 0.0,
-        },
-        expenses = {
-          'Advertising for tenants': 0.0,
-          'Body corporate fees and charges': 0.0,
-          'Borrowing expenses': 0.0,
-          'Cleaning': 0.0,
-          'Council rates': 0.0,
-          'Capital works deductions': 0.0,
-          'Gardening and lawn mowing': 0.0,
-          'Insurance': 0.0,
-          'Interest on loans': 0.0,
-          'Land tax': 0.0,
-          'Legal expenses': 0.0,
-          'Pest control': 0.0,
-          'Property agent fees and commission': 0.0,
-          'Repairs and maintenance': 0.0,
-          'Stationery, telephone and postage': 0.0,
-          'Water charges': 0.0,
-          'Sundry rental expenses': 0.0,
-        };
+  _SimpleRecord({required this.userId, required this.financialYear})
+    : income = {'Gross rent': 0.0, 'Other rental-related income': 0.0},
+      expenses = {
+        'Advertising for tenants': 0.0,
+        'Body corporate fees and charges': 0.0,
+        'Borrowing expenses': 0.0,
+        'Cleaning': 0.0,
+        'Council rates': 0.0,
+        'Capital works deductions': 0.0,
+        'Gardening and lawn mowing': 0.0,
+        'Insurance': 0.0,
+        'Interest on loans': 0.0,
+        'Land tax': 0.0,
+        'Legal expenses': 0.0,
+        'Pest control': 0.0,
+        'Property agent fees and commission': 0.0,
+        'Repairs and maintenance': 0.0,
+        'Stationery, telephone and postage': 0.0,
+        'Water charges': 0.0,
+        'Sundry rental expenses': 0.0,
+      };
 
   double get totalIncome =>
       income.values.fold(0.0, (sum, amount) => sum + amount);

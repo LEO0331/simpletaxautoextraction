@@ -108,10 +108,10 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
+                          color: Colors.black.withValues(alpha: 0.05),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
-                        )
+                        ),
                       ],
                     ),
                     child: BarChart(_buildChartData(records)),
@@ -162,29 +162,31 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
       if (expense > maxY) maxY = expense;
       if (net.abs() > maxY) maxY = net.abs();
 
-      barGroups.add(BarChartGroupData(
-        x: i,
-        barRods: [
-          BarChartRodData(
-            toY: income,
-            color: Colors.green[400],
-            width: 16,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          BarChartRodData(
-            toY: expense,
-            color: Colors.red[400],
-            width: 16,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          BarChartRodData(
-            toY: net,
-            color: Colors.blue[600],
-            width: 16,
-            borderRadius: BorderRadius.circular(4),
-          ),
-        ],
-      ));
+      barGroups.add(
+        BarChartGroupData(
+          x: i,
+          barRods: [
+            BarChartRodData(
+              toY: income,
+              color: Colors.green[400],
+              width: 16,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            BarChartRodData(
+              toY: expense,
+              color: Colors.red[400],
+              width: 16,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            BarChartRodData(
+              toY: net,
+              color: Colors.blue[600],
+              width: 16,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ],
+        ),
+      );
     }
 
     return BarChartData(
@@ -227,7 +229,9 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
           ),
         ),
         topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles: const AxisTitles(
+          sideTitles: SideTitles(showTitles: false),
+        ),
       ),
       gridData: FlGridData(
         show: true,

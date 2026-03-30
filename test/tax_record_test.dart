@@ -5,10 +5,7 @@ void main() {
   group('TaxRecord Model', () {
     group('Constructor', () {
       test('creates with required fields and defaults', () {
-        final record = TaxRecord(
-          userId: 'user1',
-          financialYear: '2024-2025',
-        );
+        final record = TaxRecord(userId: 'user1', financialYear: '2024-2025');
 
         expect(record.userId, 'user1');
         expect(record.financialYear, '2024-2025');
@@ -113,7 +110,10 @@ void main() {
         final record = TaxRecord.empty('user1', '2024-2025');
 
         expect(record.income.containsKey('Gross rent'), isTrue);
-        expect(record.income.containsKey('Other rental-related income'), isTrue);
+        expect(
+          record.income.containsKey('Other rental-related income'),
+          isTrue,
+        );
         expect(record.income.length, 2);
         expect(record.income.values.every((v) => v == 0.0), isTrue);
       });
@@ -142,8 +142,11 @@ void main() {
         ];
 
         for (final cat in expectedCategories) {
-          expect(record.expenses.containsKey(cat), isTrue,
-              reason: 'Missing ATO category: $cat');
+          expect(
+            record.expenses.containsKey(cat),
+            isTrue,
+            reason: 'Missing ATO category: $cat',
+          );
         }
         expect(record.expenses.length, expectedCategories.length);
         expect(record.expenses.values.every((v) => v == 0.0), isTrue);
@@ -200,14 +203,18 @@ void main() {
         expect(map['financialYear'], '2024-2025');
         expect(map['income'], {'Gross rent': 14340.0});
         expect(map['expenses'], {'Insurance': 317.0});
-        expect(map.containsKey('createdAt'), isTrue);
+        expect(map.containsKey('createdAt'), isFalse);
+        expect(map.containsKey('updatedAt'), isFalse);
       });
 
       test('fromMap -> toMap round-trip preserves data', () {
         final originalData = {
           'userId': 'user1',
           'financialYear': '2024-2025',
-          'income': {'Gross rent': 14340.0, 'Other rental-related income': 76.41},
+          'income': {
+            'Gross rent': 14340.0,
+            'Other rental-related income': 76.41,
+          },
           'expenses': {'Insurance': 317.0, 'Repairs and maintenance': 99.0},
         };
 
