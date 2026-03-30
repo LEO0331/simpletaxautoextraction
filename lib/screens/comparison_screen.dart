@@ -64,63 +64,65 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
           style: GoogleFonts.inter(fontWeight: FontWeight.w600),
         ),
       ),
-      body: StreamBuilder<List<TaxRecord>>(
-        stream: _firestoreService.getUserTaxRecords(safeUserId),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: SelectionArea(
+        child: StreamBuilder<List<TaxRecord>>(
+          stream: _firestoreService.getUserTaxRecords(safeUserId),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return Center(
-              child: Text(
-                'No data available for comparison.',
-                style: GoogleFonts.inter(color: Colors.grey[600]),
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              return Center(
+                child: Text(
+                  'No data available for comparison.',
+                  style: GoogleFonts.inter(color: Colors.grey[600]),
+                ),
+              );
+            }
+
+            final records = snapshot.data!;
+            // Sort records by financialYear ascending
+            records.sort((a, b) => a.financialYear.compareTo(b.financialYear));
+
+            return Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Income vs Expenses vs Net Position',
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  _buildLegend(),
+                  const SizedBox(height: 32),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.only(right: 24, top: 24),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: BarChart(_buildChartData(records)),
+                    ),
+                  ),
+                ],
               ),
             );
-          }
-
-          final records = snapshot.data!;
-          // Sort records by financialYear ascending
-          records.sort((a, b) => a.financialYear.compareTo(b.financialYear));
-
-          return Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Income vs Expenses vs Net Position',
-                  style: GoogleFonts.inter(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                _buildLegend(),
-                const SizedBox(height: 32),
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.only(right: 24, top: 24),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: BarChart(_buildChartData(records)),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+          },
+        ),
       ),
     );
   }

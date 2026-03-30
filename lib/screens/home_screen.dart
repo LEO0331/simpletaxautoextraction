@@ -443,58 +443,63 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: user == null
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildUploadSection(),
-                  const SizedBox(height: 32),
-                  Text(
-                    'Saved Records',
-                    style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+      body: SelectionArea(
+        child: user == null
+            ? const Center(child: CircularProgressIndicator())
+            : Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildUploadSection(),
+                    const SizedBox(height: 32),
+                    Text(
+                      'Saved Records',
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: StreamBuilder<List<TaxRecord>>(
-                      stream: _firestoreService.getUserTaxRecords(user.uid),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: StreamBuilder<List<TaxRecord>>(
+                        stream: _firestoreService.getUserTaxRecords(user.uid),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
 
-                        if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                          return Center(
-                            child: Text(
-                              'No records found. Upload a PDF to begin.',
-                              style: GoogleFonts.inter(color: Colors.grey[600]),
-                            ),
-                          );
-                        }
+                          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                            return Center(
+                              child: Text(
+                                'No records found. Upload a PDF to begin.',
+                                style: GoogleFonts.inter(
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            );
+                          }
 
-                        final records = snapshot.data!;
-                        return ListView.separated(
-                          itemCount: records.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            final record = records[index];
-                            return _buildRecordCard(record);
-                          },
-                        );
-                      },
+                          final records = snapshot.data!;
+                          return ListView.separated(
+                            itemCount: records.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: 8),
+                            itemBuilder: (context, index) {
+                              final record = records[index];
+                              return _buildRecordCard(record);
+                            },
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 

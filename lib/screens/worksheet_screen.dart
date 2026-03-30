@@ -227,38 +227,40 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
           ],
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 800),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildSummaryCard(),
-                const SizedBox(height: 24),
-                Text(
-                  'Income',
-                  style: GoogleFonts.inter(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green[800],
+      body: SelectionArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 800),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildSummaryCard(),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Income',
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green[800],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                _buildCategoryList(_activeRecord.income, _updateIncome),
-                const SizedBox(height: 24),
-                Text(
-                  'Expenses',
-                  style: GoogleFonts.inter(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red[800],
+                  const SizedBox(height: 8),
+                  _buildCategoryList(_activeRecord.income, _updateIncome),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Expenses',
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red[800],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                _buildCategoryList(_activeRecord.expenses, _updateExpense),
-              ],
+                  const SizedBox(height: 8),
+                  _buildCategoryList(_activeRecord.expenses, _updateExpense),
+                ],
+              ),
             ),
           ),
         ),
