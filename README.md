@@ -117,6 +117,7 @@ lib/
 - Review `web/index.html`, `web/robots.txt`, and `web/sitemap.xml` metadata after deploy.
 - Verify no debug logs or test-only credentials are bundled.
 - Confirm contact endpoint in `web/.well-known/security.txt` is monitored.
+- Run [docs/PRODUCTION_HARDENING_CHECKLIST.md](docs/PRODUCTION_HARDENING_CHECKLIST.md) for Firebase console hardening and final GO/NO-GO sign-off.
 
 ---
 
