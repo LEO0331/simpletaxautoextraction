@@ -1,0 +1,4 @@
+Contact: https://github.com/LEO0331/simpletaxautoextraction/issues
+Expires: 2027-04-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://leo0331.github.io/simpletaxautoextraction/.well-known/security.txt
