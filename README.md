@@ -103,9 +103,21 @@ lib/
 ## 🔒 Security and test coverage
 
 - **Firebase Auth** ensures only authenticated users can access data.
-- **Firestore Security Rules** enforce that each user can only read/write their own `tax_records` subcollection.
+- **Firestore Security Rules** enforce per-user ownership for `tax_records`, `properties`, and mapping `settings`.
+- **Record validation in rules** checks required fields and caps long text fields to reduce malformed writes.
+- **Session persistence on web** is set to `SESSION` so closing the tab clears that tab's auth session.
 
 ![Test Coverage](assets/screenshots/test_coverage.png)
+---
+
+## ✅ Pre-launch checklist
+
+- Publish latest `firestore.rules` from this repo.
+- Enable HTTPS-only hosting for production.
+- Review `web/index.html`, `web/robots.txt`, and `web/sitemap.xml` metadata after deploy.
+- Verify no debug logs or test-only credentials are bundled.
+- Confirm contact endpoint in `web/.well-known/security.txt` is monitored.
+
 ---
 
 ## 📋 Supported PDF Formats

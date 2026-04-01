@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://leo0331.github.io/simpletaxautoextraction/sitemap.xml

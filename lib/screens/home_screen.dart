@@ -1057,6 +1057,16 @@ class _HomeScreenState extends State<HomeScreen> {
               'Supports Forge + generic layouts, with custom mapping rules',
               style: GoogleFonts.inter(fontSize: 14, color: Colors.grey[600]),
             ),
+            const SizedBox(height: 8),
+            Text(
+              'Only your account can access saved records. Review before saving.',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: Colors.blueGrey[700],
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),

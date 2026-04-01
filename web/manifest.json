@@ -1,11 +1,11 @@
 {
-    "name": "simpletaxautoextraction",
-    "short_name": "simpletaxautoextraction",
-    "start_url": ".",
+    "name": "Tax Auto Extraction",
+    "short_name": "Tax Extract",
+    "start_url": "/simpletaxautoextraction/",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "ATO-ready rental property statement extraction and yearly tax trend tracking.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

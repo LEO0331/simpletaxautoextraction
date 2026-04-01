@@ -28,6 +28,21 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _errorMessage;
 
   Future<void> _submit() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() {
+        _errorMessage = 'Please enter a valid email address.';
+      });
+      return;
+    }
+    if (password.length < 6) {
+      setState(() {
+        _errorMessage = 'Password must be at least 6 characters.';
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -35,15 +50,9 @@ class _AuthScreenState extends State<AuthScreen> {
 
     try {
       if (_isLogin) {
-        await _authService.signInWithEmailPassword(
-          _emailController.text,
-          _passwordController.text,
-        );
+        await _authService.signInWithEmailPassword(email, password);
       } else {
-        await _authService.createUserWithEmailPassword(
-          _emailController.text,
-          _passwordController.text,
-        );
+        await _authService.createUserWithEmailPassword(email, password);
       }
     } on FirebaseAuthException catch (e) {
       setState(() {
@@ -196,6 +205,49 @@ class _AuthScreenState extends State<AuthScreen> {
                         style: GoogleFonts.inter(
                           color: Theme.of(context).colorScheme.primary,
                         ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.blue[100]!),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Why users trust this app',
+                            style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '• Account-protected records via Firebase Auth',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                          Text(
+                            '• Firestore rules isolate each user\'s data',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                          Text(
+                            '• No bank login required',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
