@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simpletaxautoextraction/utils/file_exporter.dart';
+import 'package:simpletaxautoextraction/utils/file_exporter_io.dart' as io_impl;
 
 class FakeFilePicker extends FilePicker {
   FakeFilePicker({required this.path});
@@ -55,5 +56,33 @@ void main() {
 
       expect(ok, isFalse);
     });
+
+    test('saveBinaryFile writes bytes when path is provided', () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'export_binary_test_',
+      );
+      final filePath = '${tempDir.path}/sample.pdf';
+      final bytes = Uint8List.fromList([1, 2, 3, 4, 5]);
+      FilePicker.platform = FakeFilePicker(path: filePath);
+
+      final ok = await io_impl.saveBinaryFile('sample.pdf', bytes);
+
+      expect(ok, isTrue);
+      expect(await File(filePath).readAsBytes(), bytes);
+    });
+
+    test(
+      'saveBinaryFile returns false when picker returns empty path',
+      () async {
+        FilePicker.platform = FakeFilePicker(path: '');
+
+        final ok = await io_impl.saveBinaryFile(
+          'sample.pdf',
+          Uint8List.fromList([1, 2, 3]),
+        );
+
+        expect(ok, isFalse);
+      },
+    );
   });
 }
