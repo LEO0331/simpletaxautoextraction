@@ -133,7 +133,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                             height: 1.5,
                                           ),
                                         ),
-                                        const Spacer(),
+                                        const SizedBox(height: 40),
                                         Container(
                                           padding: const EdgeInsets.all(14),
                                           decoration: BoxDecoration(

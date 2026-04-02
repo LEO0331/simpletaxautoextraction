@@ -75,6 +75,63 @@ class _FakePdfExtractionService extends PdfExtractionService {
   }
 }
 
+class _UnmappedPdfExtractionService extends PdfExtractionService {
+  @override
+  Future<PdfExtractionResult> extractPreviewFromPdf(
+    List<int> bytes,
+    String userId,
+    String financialYear, {
+    String propertyId = 'default',
+    String propertyName = 'Primary Property',
+    String? sourceFileName,
+    Map<String, String>? customIncomeMappings,
+    Map<String, String>? customExpenseMappings,
+  }) async {
+    final record = TaxRecord.empty(
+      userId,
+      financialYear,
+      propertyId: propertyId,
+      propertyName: propertyName,
+    );
+
+    return PdfExtractionResult(
+      record: record,
+      parserName: 'Unmapped Parser',
+      confidence: 0.2,
+      unmappedEntries: const [
+        UnmappedExtractionEntry(
+          sourceCategory: 'Unknown Income',
+          amount: 123,
+          isIncome: true,
+        ),
+        UnmappedExtractionEntry(
+          sourceCategory: 'Unknown Expense',
+          amount: 45,
+          isIncome: false,
+        ),
+      ],
+      mappedEntryCount: 0,
+      totalEntryCount: 2,
+    );
+  }
+}
+
+class _ThrowingPdfExtractionService extends PdfExtractionService {
+  @override
+  Future<PdfExtractionResult> extractPreviewFromPdf(
+    List<int> bytes,
+    String userId,
+    String financialYear, {
+    String propertyId = 'default',
+    String propertyName = 'Primary Property',
+    String? sourceFileName,
+    Map<String, String>? customIncomeMappings,
+    Map<String, String>? customExpenseMappings,
+  }) async {
+    throw StateError('boom');
+  }
+}
+
 class _FakeFilePicker extends FilePicker {
   _FakeFilePicker({required this.pickResult});
 
@@ -129,6 +186,20 @@ void main() {
         authService: _MockAuthService(),
         firestoreService: firestoreService,
         pdfExtractionService: _FakePdfExtractionService(),
+      ),
+    );
+  }
+
+  Widget buildAppWith({
+    required AuthService authService,
+    required FirestoreService firestoreService,
+    required PdfExtractionService pdfService,
+  }) {
+    return MaterialApp(
+      home: HomeScreen(
+        authService: authService,
+        firestoreService: firestoreService,
+        pdfExtractionService: pdfService,
       ),
     );
   }
@@ -229,6 +300,158 @@ void main() {
     await tester.tap(find.text('Export Summary PDF'));
     await tester.pumpAndSettle();
     expect(find.text('No records to export.'), findsOneWidget);
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('year dialog validates input before continuing', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
+    FilePicker.platform = _FakeFilePicker(
+      pickResult: FilePickerResult([
+        PlatformFile(
+          name: 'statement.pdf',
+          size: 3,
+          bytes: Uint8List.fromList([1, 2, 3]),
+        ),
+      ]),
+    );
+
+    await tester.pumpWidget(buildApp(firestoreService));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Upload Property Summary PDF'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '2025');
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Use YYYY-YYYY and ensure end year is start+1.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('unmapped preview flow maps entries and opens worksheet', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1200));
+    final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
+    FilePicker.platform = _FakeFilePicker(
+      pickResult: FilePickerResult([
+        PlatformFile(
+          name: 'statement.pdf',
+          size: 3,
+          bytes: Uint8List.fromList([1, 2, 3]),
+        ),
+      ]),
+    );
+
+    await tester.pumpWidget(
+      buildAppWith(
+        authService: _MockAuthService(),
+        firestoreService: firestoreService,
+        pdfService: _UnmappedPdfExtractionService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Upload Property Summary PDF'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(
+      find.text('Unmapped lines (choose destination categories):'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Continue to Worksheet'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.textContaining('Tax Worksheet'), findsOneWidget);
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('add property updates selected property', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1200));
+    final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
+    await tester.pumpWidget(buildApp(firestoreService));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add Property'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'Beach House');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Add'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Beach House'), findsWidgets);
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('sync menu syncs queued drafts and compare navigation works', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1200));
+    final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
+    DraftSyncService.instance.queueDraft(
+      TaxRecord.empty('test_uid', '2025-2026'),
+    );
+
+    await tester.pumpWidget(buildApp(firestoreService));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync Offline Drafts'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Trends & Comparison'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Yearly Comparison'), findsOneWidget);
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('processing failure shows retry snackbar', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
+    FilePicker.platform = _FakeFilePicker(
+      pickResult: FilePickerResult([
+        PlatformFile(
+          name: 'statement.pdf',
+          size: 3,
+          bytes: Uint8List.fromList([1, 2, 3]),
+        ),
+      ]),
+    );
+
+    await tester.pumpWidget(
+      buildAppWith(
+        authService: _MockAuthService(),
+        firestoreService: firestoreService,
+        pdfService: _ThrowingPdfExtractionService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Upload Property Summary PDF'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Failed to process PDF:'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
     await tester.binding.setSurfaceSize(null);
   });
 }

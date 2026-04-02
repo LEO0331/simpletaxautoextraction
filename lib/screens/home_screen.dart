@@ -657,6 +657,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   const SizedBox(height: 8),
                                   DropdownButtonFormField<String>(
                                     initialValue: selectedValue,
+                                    isExpanded: true,
                                     decoration: const InputDecoration(
                                       border: OutlineInputBorder(),
                                       isDense: true,
