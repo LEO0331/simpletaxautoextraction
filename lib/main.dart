@@ -26,15 +26,73 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final baseTextTheme = GoogleFonts.workSansTextTheme(
+      Theme.of(context).textTheme,
+    );
+    final displayTextTheme = GoogleFonts.dmSerifDisplayTextTheme(baseTextTheme);
+    final colorScheme = const ColorScheme(
+      brightness: Brightness.light,
+      primary: Color(0xFF102A43),
+      onPrimary: Colors.white,
+      secondary: Color(0xFFC58545),
+      onSecondary: Color(0xFF102A43),
+      error: Color(0xFFB42318),
+      onError: Colors.white,
+      surface: Color(0xFFF9F6EE),
+      onSurface: Color(0xFF102A43),
+    );
+
     return MaterialApp(
       title: 'Tax Auto Extraction',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E88E5), // A professional blue
-          brightness: Brightness.light,
+        colorScheme: colorScheme,
+        scaffoldBackgroundColor: const Color(0xFFF6F3EA),
+        textTheme: baseTextTheme.copyWith(
+          headlineLarge: displayTextTheme.headlineLarge,
+          headlineMedium: displayTextTheme.headlineMedium,
+          headlineSmall: displayTextTheme.headlineSmall,
         ),
-        textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          foregroundColor: Color(0xFF102A43),
+        ),
+        cardTheme: CardThemeData(
+          color: Colors.white.withValues(alpha: 0.88),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(
+              color: const Color(0xFF102A43).withValues(alpha: 0.10),
+            ),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white.withValues(alpha: 0.92),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(
+              color: const Color(0xFF102A43).withValues(alpha: 0.18),
+            ),
+          ),
+          focusedBorder: const OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(14)),
+            borderSide: BorderSide(color: Color(0xFFC58545), width: 1.4),
+          ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF102A43),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          ),
+        ),
         useMaterial3: true,
       ),
       home: StreamBuilder<User?>(

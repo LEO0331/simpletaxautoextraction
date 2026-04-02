@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/auth_service.dart';
+import '../widgets/stage_background.dart';
 
 class AuthScreen extends StatefulWidget {
   final AuthService? authService;
@@ -80,182 +81,243 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final accent = Theme.of(context).colorScheme.secondary;
     return Scaffold(
-      backgroundColor: Colors.grey[100],
-      body: Center(
-        child: SelectionArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 400),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      _isLogin ? 'Welcome Back' : 'Create Account',
-                      style: GoogleFonts.inter(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _isLogin
-                          ? 'Sign in to access your tax extractions'
-                          : 'Sign up to start auto-extracting taxes',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 32),
-                    if (_errorMessage != null)
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.red[50],
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          _errorMessage!,
-                          style: GoogleFonts.inter(color: Colors.red[800]),
-                        ),
-                      ),
-                    TextField(
-                      controller: _emailController,
-                      decoration: InputDecoration(
-                        labelText: 'Email',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        prefixIcon: const Icon(Icons.email_outlined),
-                      ),
-                      keyboardType: TextInputType.emailAddress,
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _passwordController,
-                      decoration: InputDecoration(
-                        labelText: 'Password',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        prefixIcon: const Icon(Icons.lock_outline),
-                      ),
-                      obscureText: true,
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: _isLoading ? null : _submit,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : Text(
-                              _isLogin ? 'Sign In' : 'Sign Up',
-                              style: GoogleFonts.inter(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
+      body: StageBackground(
+        child: Center(
+          child: SelectionArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 980),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 760;
+                    return AppPanel(
+                      padding: const EdgeInsets.all(0),
+                      child: compact
+                          ? _buildAuthForm(primary, accent, compact: true)
+                          : Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(36),
+                                    decoration: BoxDecoration(
+                                      color: primary,
+                                      borderRadius: const BorderRadius.only(
+                                        topLeft: Radius.circular(24),
+                                        bottomLeft: Radius.circular(24),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Tax Auto Extraction',
+                                          style: GoogleFonts.dmSerifDisplay(
+                                            fontSize: 40,
+                                            height: 1.05,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          'Australian rental-property worksheets, prepared faster with guided PDF extraction.',
+                                          style: GoogleFonts.workSans(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.9,
+                                            ),
+                                            fontSize: 15,
+                                            height: 1.5,
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        Container(
+                                          padding: const EdgeInsets.all(14),
+                                          decoration: BoxDecoration(
+                                            color: accent.withValues(
+                                              alpha: 0.2,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Built for accuracy, with review controls before every save.',
+                                            style: GoogleFonts.workSans(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _buildAuthForm(
+                                    primary,
+                                    accent,
+                                    compact: false,
+                                  ),
+                                ),
+                              ],
                             ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _isLogin = !_isLogin;
-                          _errorMessage = null;
-                        });
-                      },
-                      child: Text(
-                        _isLogin
-                            ? 'Don\'t have an account? Sign Up'
-                            : 'Already have an account? Sign In',
-                        style: GoogleFonts.inter(
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue[50],
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.blue[100]!),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Why users trust this app',
-                            style: GoogleFonts.inter(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.blue[900],
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '• Account-protected records via Firebase Auth',
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              color: Colors.blue[900],
-                            ),
-                          ),
-                          Text(
-                            '• Firestore rules isolate each user\'s data',
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              color: Colors.blue[900],
-                            ),
-                          ),
-                          Text(
-                            '• No bank login required',
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              color: Colors.blue[900],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildAuthForm(Color primary, Color accent, {required bool compact}) {
+    return Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (compact)
+            Text(
+              'Tax Auto Extraction',
+              style: GoogleFonts.dmSerifDisplay(
+                fontSize: 34,
+                color: primary,
+                height: 1.05,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          if (compact) const SizedBox(height: 20),
+          Text(
+            _isLogin ? 'Welcome Back' : 'Create Account',
+            style: GoogleFonts.dmSerifDisplay(
+              fontSize: 34,
+              color: primary,
+              height: 1.1,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _isLogin
+                ? 'Sign in to access your tax extractions'
+                : 'Sign up to start auto-extracting taxes',
+            style: GoogleFonts.workSans(
+              fontSize: 14,
+              color: const Color(0xFF486581),
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 30),
+          if (_errorMessage != null)
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFEEE9),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFF15A29)),
+              ),
+              child: Text(
+                _errorMessage!,
+                style: GoogleFonts.workSans(color: const Color(0xFF7A271A)),
+              ),
+            ),
+          TextField(
+            controller: _emailController,
+            decoration: const InputDecoration(
+              labelText: 'Email',
+              prefixIcon: Icon(Icons.email_outlined),
+            ),
+            keyboardType: TextInputType.emailAddress,
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _passwordController,
+            decoration: const InputDecoration(
+              labelText: 'Password',
+              prefixIcon: Icon(Icons.lock_outline),
+            ),
+            obscureText: true,
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: _isLoading ? null : _submit,
+            child: _isLoading
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : Text(
+                    _isLogin ? 'Sign In' : 'Sign Up',
+                    style: GoogleFonts.workSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _isLogin = !_isLogin;
+                _errorMessage = null;
+              });
+            },
+            child: Text(
+              _isLogin
+                  ? 'Don\'t have an account? Sign Up'
+                  : 'Already have an account? Sign In',
+              style: GoogleFonts.workSans(
+                color: primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: accent.withValues(alpha: 0.35)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Why users trust this app',
+                  style: GoogleFonts.workSans(
+                    fontWeight: FontWeight.w700,
+                    color: primary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '• Account-protected records via Firebase Auth',
+                  style: GoogleFonts.workSans(fontSize: 12, color: primary),
+                ),
+                Text(
+                  '• Firestore rules isolate each user\'s data',
+                  style: GoogleFonts.workSans(fontSize: 12, color: primary),
+                ),
+                Text(
+                  '• No bank login required',
+                  style: GoogleFonts.workSans(fontSize: 12, color: primary),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

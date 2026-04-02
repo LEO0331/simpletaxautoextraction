@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/tax_record.dart';
 import '../services/draft_sync_service.dart';
 import '../services/firestore_service.dart';
+import '../widgets/stage_background.dart';
 
 class WorksheetScreen extends StatefulWidget {
   final TaxRecord record;
@@ -230,12 +231,16 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return Scaffold(
-      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: Text(
           'Tax Worksheet ${_activeRecord.financialYear}',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+          style: GoogleFonts.dmSerifDisplay(
+            fontSize: 32,
+            color: primary,
+            height: 1.0,
+          ),
         ),
         actions: [
           if (_isSaving)
@@ -261,67 +266,72 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
           ],
         ],
       ),
-      body: SelectionArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Center(
-            child: SizedBox(
-              width: 800,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildSummaryCard(),
-                  const SizedBox(height: 16),
-                  Card(
-                    child: SwitchListTile(
-                      title: const Text('Lock this financial year'),
-                      subtitle: const Text(
-                        'Locked records can only be copied to a new year.',
+      body: StageBackground(
+        child: SelectionArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16.0),
+            child: Center(
+              child: SizedBox(
+                width: 900,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildSummaryCard(),
+                    const SizedBox(height: 16),
+                    AppPanel(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
                       ),
-                      value: _isLocked,
-                      onChanged: (val) {
-                        setState(() {
-                          _isLocked = val;
-                        });
-                      },
+                      child: SwitchListTile(
+                        title: const Text('Lock this financial year'),
+                        subtitle: const Text(
+                          'Locked records can only be copied to a new year.',
+                        ),
+                        value: _isLocked,
+                        onChanged: (val) {
+                          setState(() {
+                            _isLocked = val;
+                          });
+                        },
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _notesController,
-                    maxLines: 3,
-                    readOnly: _isLocked,
-                    decoration: const InputDecoration(
-                      labelText: 'Notes',
-                      hintText: 'Add explanation for accountant/audit trail',
-                      border: OutlineInputBorder(),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _notesController,
+                      maxLines: 3,
+                      readOnly: _isLocked,
+                      decoration: const InputDecoration(
+                        labelText: 'Notes',
+                        hintText: 'Add explanation for accountant/audit trail',
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildLineItemsCard(),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Income',
-                    style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green[800],
+                    const SizedBox(height: 16),
+                    _buildLineItemsCard(),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Income',
+                      style: GoogleFonts.dmSerifDisplay(
+                        fontSize: 36,
+                        color: Colors.green[800],
+                        height: 1.0,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildCategoryList(_activeRecord.income, _updateIncome),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Expenses',
-                    style: GoogleFonts.inter(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red[800],
+                    const SizedBox(height: 8),
+                    _buildCategoryList(_activeRecord.income, _updateIncome),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Expenses',
+                      style: GoogleFonts.dmSerifDisplay(
+                        fontSize: 36,
+                        color: Colors.red[800],
+                        height: 1.0,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildCategoryList(_activeRecord.expenses, _updateExpense),
-                ],
+                    const SizedBox(height: 8),
+                    _buildCategoryList(_activeRecord.expenses, _updateExpense),
+                  ],
+                ),
               ),
             ),
           ),
@@ -336,9 +346,7 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
   }
 
   Widget _buildSummaryCard() {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    return AppPanel(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
@@ -405,9 +413,8 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
     Map<String, double> categories,
     Function(String, String) onChanged,
   ) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return AppPanel(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: ListView.separated(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -440,9 +447,6 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                         horizontal: 12,
                         vertical: 12,
                       ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
                     ),
                     onChanged: (val) => onChanged(category, val),
                   ),
@@ -460,7 +464,7 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
       return const SizedBox.shrink();
     }
 
-    return Card(
+    return AppPanel(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

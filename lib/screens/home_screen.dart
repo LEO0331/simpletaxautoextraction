@@ -10,6 +10,7 @@ import '../services/export_service.dart';
 import '../services/firestore_service.dart';
 import '../services/pdf_extraction_service.dart';
 import '../utils/file_exporter.dart';
+import '../widgets/stage_background.dart';
 import 'comparison_screen.dart';
 import 'worksheet_screen.dart';
 
@@ -783,13 +784,18 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final user = _authService.currentUser;
+    final primary = Theme.of(context).colorScheme.primary;
+    final accent = Theme.of(context).colorScheme.secondary;
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: Text(
           'Tax Auto Extraction',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+          style: GoogleFonts.dmSerifDisplay(
+            fontSize: 34,
+            color: primary,
+            height: 1.0,
+          ),
         ),
         actions: [
           PopupMenuButton<String>(
@@ -855,91 +861,126 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: SelectionArea(
-        child: user == null
-            ? const Center(child: CircularProgressIndicator())
-            : Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildPropertySelector(user.uid),
-                    if (DraftSyncService.instance.hasPendingDrafts)
-                      Card(
-                        color: Colors.orange[50],
-                        child: ListTile(
-                          title: Text(
-                            '${DraftSyncService.instance.pendingDrafts.length} offline draft(s) pending sync.',
-                          ),
-                          trailing: _isSyncingDrafts
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : TextButton(
-                                  onPressed: _syncQueuedDrafts,
-                                  child: const Text('Sync now'),
+      body: StageBackground(
+        child: SelectionArea(
+          child: user == null
+              ? const Center(child: CircularProgressIndicator())
+              : Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1100),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildPropertySelector(user.uid),
+                          if (DraftSyncService.instance.hasPendingDrafts)
+                            Card(
+                              color: const Color(0xFFFFF2D8),
+                              child: ListTile(
+                                title: Text(
+                                  '${DraftSyncService.instance.pendingDrafts.length} offline draft(s) pending sync.',
                                 ),
-                        ),
-                      ),
-                    _buildUploadSection(),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Saved Records',
-                      style: GoogleFonts.inter(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: StreamBuilder<List<TaxRecord>>(
-                        stream: _firestoreService.getUserTaxRecords(user.uid),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return const Center(
-                              child: CircularProgressIndicator(),
-                            );
-                          }
-
-                          final records = (snapshot.data ?? const [])
-                              .where(
-                                (record) =>
-                                    record.propertyId == _selectedPropertyId,
-                              )
-                              .toList();
-                          _latestRecords = records;
-
-                          if (records.isEmpty) {
-                            return Center(
-                              child: Text(
-                                'No records found. Upload a PDF to begin.',
-                                style: GoogleFonts.inter(
-                                  color: Colors.grey[600],
+                                trailing: _isSyncingDrafts
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : TextButton(
+                                        onPressed: _syncQueuedDrafts,
+                                        child: const Text('Sync now'),
+                                      ),
+                              ),
+                            ),
+                          _buildUploadSection(),
+                          const SizedBox(height: 22),
+                          Row(
+                            children: [
+                              Text(
+                                'Saved Records',
+                                style: GoogleFonts.dmSerifDisplay(
+                                  fontSize: 33,
+                                  color: primary,
                                 ),
                               ),
-                            );
-                          }
+                              const SizedBox(width: 10),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: accent.withValues(alpha: 0.20),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  _selectedPropertyName,
+                                  style: GoogleFonts.workSans(
+                                    fontWeight: FontWeight.w600,
+                                    color: primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Expanded(
+                            child: StreamBuilder<List<TaxRecord>>(
+                              stream: _firestoreService.getUserTaxRecords(
+                                user.uid,
+                              ),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return const Center(
+                                    child: CircularProgressIndicator(),
+                                  );
+                                }
 
-                          return ListView.separated(
-                            itemCount: records.length,
-                            separatorBuilder: (_, _) =>
-                                const SizedBox(height: 8),
-                            itemBuilder: (context, index) {
-                              final record = records[index];
-                              return _buildRecordCard(record);
-                            },
-                          );
-                        },
+                                final records = (snapshot.data ?? const [])
+                                    .where(
+                                      (record) =>
+                                          record.propertyId ==
+                                          _selectedPropertyId,
+                                    )
+                                    .toList();
+                                _latestRecords = records;
+
+                                if (records.isEmpty) {
+                                  return Center(
+                                    child: AppPanel(
+                                      child: Text(
+                                        'No records found. Upload a PDF to begin.',
+                                        style: GoogleFonts.workSans(
+                                          color: const Color(0xFF486581),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+
+                                return ListView.separated(
+                                  itemCount: records.length,
+                                  separatorBuilder: (_, _) =>
+                                      const SizedBox(height: 12),
+                                  itemBuilder: (context, index) {
+                                    final record = records[index];
+                                    return _buildRecordCard(record);
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+        ),
       ),
     );
   }
@@ -960,37 +1001,42 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.only(bottom: 14),
           child: Row(
             children: [
               Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _selectedPropertyId,
-                  decoration: const InputDecoration(
-                    labelText: 'Property',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                child: AppPanel(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
                   ),
-                  items: options
-                      .map(
-                        (property) => DropdownMenuItem<String>(
-                          value: property.id,
-                          child: Text(property.name),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    final selected = options.firstWhere(
-                      (property) => property.id == value,
-                    );
-                    setState(() {
-                      _selectedPropertyId = selected.id;
-                      _selectedPropertyName = selected.name;
-                    });
-                  },
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _selectedPropertyId,
+                    decoration: const InputDecoration(
+                      labelText: 'Property',
+                      isDense: true,
+                    ),
+                    items: options
+                        .map(
+                          (property) => DropdownMenuItem<String>(
+                            value: property.id,
+                            child: Text(property.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      final selected = options.firstWhere(
+                        (property) => property.id == value,
+                      );
+                      setState(() {
+                        _selectedPropertyId = selected.id;
+                        _selectedPropertyName = selected.name;
+                      });
+                    },
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1020,16 +1066,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return InkWell(
       onTap: _isProcessing ? null : _pickAndProcessPdf,
       borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.05),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-            width: 2,
-            style: BorderStyle.solid,
-          ),
-          borderRadius: BorderRadius.circular(16),
+      child: AppPanel(
+        padding: const EdgeInsets.all(26),
+        color: Colors.white.withValues(alpha: 0.72),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.4),
+          width: 1.5,
         ),
         child: Column(
           children: [
@@ -1046,23 +1088,26 @@ class _HomeScreenState extends State<HomeScreen> {
               _isProcessing
                   ? 'Extracting Data...'
                   : 'Upload Property Summary PDF',
-              style: GoogleFonts.inter(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
+              style: GoogleFonts.dmSerifDisplay(
+                fontSize: 34,
                 color: Theme.of(context).colorScheme.primary,
+                height: 1.0,
               ),
             ),
             const SizedBox(height: 6),
             Text(
               'Supports Forge + generic layouts, with custom mapping rules',
-              style: GoogleFonts.inter(fontSize: 14, color: Colors.grey[600]),
+              style: GoogleFonts.workSans(
+                fontSize: 14,
+                color: const Color(0xFF486581),
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               'Only your account can access saved records. Review before saving.',
-              style: GoogleFonts.inter(
+              style: GoogleFonts.workSans(
                 fontSize: 12,
-                color: Colors.blueGrey[700],
+                color: const Color(0xFF334E68),
                 fontWeight: FontWeight.w500,
               ),
               textAlign: TextAlign.center,
@@ -1078,8 +1123,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final isPositive = net >= 0;
 
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 20,
@@ -1087,15 +1130,25 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         title: Text(
           'FY ${record.financialYear}',
-          style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 16),
+          style: GoogleFonts.dmSerifDisplay(
+            fontSize: 30,
+            color: Theme.of(context).colorScheme.primary,
+            height: 1.0,
+          ),
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Income: \$${record.totalIncome.toStringAsFixed(2)}'),
-              Text('Expenses: \$${record.totalExpenses.toStringAsFixed(2)}'),
+              Text(
+                'Income: \$${record.totalIncome.toStringAsFixed(2)}',
+                style: GoogleFonts.workSans(fontWeight: FontWeight.w500),
+              ),
+              Text(
+                'Expenses: \$${record.totalExpenses.toStringAsFixed(2)}',
+                style: GoogleFonts.workSans(fontWeight: FontWeight.w500),
+              ),
               Text('Property: ${record.propertyName}'),
               Text('Transactions: ${record.lineItems.length}'),
               if (record.sourceFileName != null)
