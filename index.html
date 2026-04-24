@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -28,16 +28,20 @@
   <link rel="canonical" href="https://leo0331.github.io/simpletaxautoextraction/">
 
   <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_AU">
   <meta property="og:title" content="Tax Auto Extraction">
   <meta property="og:description" content="Automatically extract income and expenses from rental statements and map them to ATO categories.">
   <meta property="og:url" content="https://leo0331.github.io/simpletaxautoextraction/">
   <meta property="og:site_name" content="Tax Auto Extraction">
   <meta property="og:image" content="https://leo0331.github.io/simpletaxautoextraction/assets/screenshots/dashboard.png">
+  <meta property="og:image:alt" content="Tax Auto Extraction dashboard showing rental income and expenses by year">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Tax Auto Extraction">
   <meta name="twitter:description" content="ATO-ready rental property tax extraction and year-over-year trend tracking.">
   <meta name="twitter:image" content="https://leo0331.github.io/simpletaxautoextraction/assets/screenshots/dashboard.png">
+  <meta name="twitter:image:alt" content="Tax Auto Extraction dashboard showing rental income and expenses by year">
+  <meta name="twitter:url" content="https://leo0331.github.io/simpletaxautoextraction/">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -53,16 +57,41 @@
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "Tax Auto Extraction",
-      "applicationCategory": "BusinessApplication",
-      "operatingSystem": "Web",
-      "description": "Upload property statements, auto-extract categories, and compare tax trends by financial year.",
-      "url": "https://leo0331.github.io/simpletaxautoextraction/"
+      "@graph": [
+        {
+          "@type": "Organization",
+          "name": "Tax Auto Extraction",
+          "url": "https://leo0331.github.io/simpletaxautoextraction/",
+          "logo": "https://leo0331.github.io/simpletaxautoextraction/icons/Icon-512.png"
+        },
+        {
+          "@type": "WebSite",
+          "name": "Tax Auto Extraction",
+          "url": "https://leo0331.github.io/simpletaxautoextraction/"
+        },
+        {
+          "@type": "WebPage",
+          "name": "Tax Auto Extraction",
+          "url": "https://leo0331.github.io/simpletaxautoextraction/",
+          "description": "Upload rental property statements, auto-map to ATO worksheet categories, and track yearly tax trends in one secure dashboard."
+        },
+        {
+          "@type": "SoftwareApplication",
+          "name": "Tax Auto Extraction",
+          "applicationCategory": "BusinessApplication",
+          "operatingSystem": "Web",
+          "description": "Upload property statements, auto-extract categories, and compare tax trends by financial year.",
+          "url": "https://leo0331.github.io/simpletaxautoextraction/"
+        }
+      ]
     }
   </script>
 </head>
 <body>
+  <noscript>
+    Tax Auto Extraction helps Australian rental property owners extract statement data,
+    map values to ATO worksheet categories, and compare yearly income and expenses.
+  </noscript>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
