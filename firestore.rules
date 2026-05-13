@@ -57,6 +57,71 @@ service cloud.firestore {
         && (data.lineItems is list);
     }
 
+    function validInvestmentType(value) {
+      return value == "BUY" || value == "SELL";
+    }
+
+    function validInvestmentTransaction(data, userId) {
+      return data.keys().hasAll([
+          'userId',
+          'ticker',
+          'securityName',
+          'transactionType',
+          'tradeDate',
+          'units',
+          'averagePrice',
+          'consideration',
+          'brokerage',
+          'totalCost',
+          'sourceParser',
+          'parserVersion',
+          'notes',
+          'isLocked'
+        ])
+        && data.keys().hasOnly([
+          'userId',
+          'ticker',
+          'securityName',
+          'transactionType',
+          'tradeDate',
+          'settlementDate',
+          'units',
+          'averagePrice',
+          'consideration',
+          'brokerage',
+          'gst',
+          'totalCost',
+          'confirmationNumber',
+          'accountNumber',
+          'sourceFileName',
+          'sourceParser',
+          'parserVersion',
+          'notes',
+          'isLocked',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.userId == userId
+        && validString(data.ticker, 16)
+        && validString(data.securityName, 180)
+        && validInvestmentType(data.transactionType)
+        && (data.tradeDate is timestamp)
+        && (data.settlementDate == null || data.settlementDate is timestamp)
+        && (data.units is number) && data.units > 0
+        && (data.averagePrice is number) && data.averagePrice > 0
+        && (data.consideration is number) && data.consideration >= 0
+        && (data.brokerage is number) && data.brokerage >= 0
+        && (!(data.gst is number) || data.gst >= 0)
+        && (data.totalCost is number) && data.totalCost > 0
+        && validOptionalString(data.confirmationNumber, 64)
+        && validOptionalString(data.accountNumber, 64)
+        && validOptionalString(data.sourceFileName, 255)
+        && validString(data.sourceParser, 120)
+        && validString(data.parserVersion, 24)
+        && (data.notes is string) && data.notes.size() <= 2000
+        && (data.isLocked is bool);
+    }
+
     match /users/{userId} {
       allow read, write: if isOwner(userId);
 
@@ -77,6 +142,12 @@ service cloud.firestore {
         allow read, delete: if isOwner(userId);
         allow create, update: if isOwner(userId)
           && validString(request.resource.data.name, 120);
+      }
+
+      match /investment_transactions/{transactionId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && validInvestmentTransaction(request.resource.data, userId);
       }
     }
   }

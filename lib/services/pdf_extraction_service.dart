@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../models/tax_record.dart';
+import 'parsers/commsec_trade_confirmation_parser.dart';
 
 class UnmappedExtractionEntry {
   final String sourceCategory;
@@ -68,6 +69,9 @@ class PdfExtractionService {
     stopHeaders: ['PROPERTY BALANCE:', 'Statement Summary', 'Owner Statement'],
   );
 
+  final CommsecTradeConfirmationParser _investmentParser =
+      CommsecTradeConfirmationParser();
+
   /// Backward-compatible API used across the app/tests.
   Future<TaxRecord> extractFromPdf(
     List<int> bytes,
@@ -121,6 +125,25 @@ class PdfExtractionService {
       );
     } catch (e) {
       debugPrint('Error extracting PDF: $e');
+      rethrow;
+    }
+  }
+
+  Future<InvestmentExtractionResult> extractInvestmentTransactionFromPdf(
+    List<int> bytes, {
+    String? sourceFileName,
+  }) async {
+    try {
+      final document = PdfDocument(inputBytes: bytes);
+      final textExtractor = PdfTextExtractor(document);
+      final extractedText = textExtractor.extractText();
+      document.dispose();
+      return _investmentParser.parse(
+        extractedText,
+        sourceFileName: sourceFileName,
+      );
+    } catch (e) {
+      debugPrint('Error extracting investment PDF: $e');
       rethrow;
     }
   }

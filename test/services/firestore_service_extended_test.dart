@@ -1,5 +1,6 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:simpletaxautoextraction/models/investment_transaction.dart';
 import 'package:simpletaxautoextraction/models/tax_record.dart';
 import 'package:simpletaxautoextraction/services/firestore_service.dart';
 
@@ -81,6 +82,36 @@ void main() {
       expect(mappings['income']!['rent rebate'], 'Other rental-related income');
       expect(mappings['expense']!['strata'], 'Body corporate fees and charges');
       expect(properties.any((p) => p.name == 'Apartment 123'), isTrue);
+    });
+
+    test('investment transaction save and duplicate detection', () async {
+      const userId = 'u1';
+      final tx = InvestmentTransaction(
+        userId: userId,
+        ticker: 'NDQ',
+        securityName: 'ETF',
+        transactionType: InvestmentTransactionType.buy,
+        tradeDate: DateTime(2026, 3, 30),
+        units: 80,
+        averagePrice: 49.66,
+        consideration: 3972.8,
+        brokerage: 7.94,
+        totalCost: 3980.74,
+        confirmationNumber: 'C173462109',
+        sourceParser: 'test',
+        parserVersion: 'v1',
+      );
+
+      final id = await service.saveInvestmentTransaction(tx);
+      final list = await service.getInvestmentTransactionsOnce(userId);
+      expect(id, isNotEmpty);
+      expect(list.length, 1);
+
+      final duplicate = await service.findInvestmentDuplicate(
+        userId,
+        tx.copyWith(confirmationNumber: 'C173462109'),
+      );
+      expect(duplicate, isNotNull);
     });
   });
 }

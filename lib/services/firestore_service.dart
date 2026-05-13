@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/investment_transaction.dart';
 import '../models/tax_record.dart';
 
 class SaveTaxRecordResult {
@@ -190,5 +191,109 @@ class FirestoreService {
         .collection('tax_records')
         .doc(recordId)
         .delete();
+  }
+
+  Future<String> saveInvestmentTransaction(
+    InvestmentTransaction transaction,
+  ) async {
+    final colRef = _db
+        .collection('users')
+        .doc(transaction.userId)
+        .collection('investment_transactions');
+
+    if (transaction.id != null && transaction.id!.isNotEmpty) {
+      await colRef.doc(transaction.id).set({
+        ...transaction.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      return transaction.id!;
+    }
+
+    final newDoc = colRef.doc();
+    await newDoc.set({
+      ...transaction.copyWith(id: newDoc.id).toMap(),
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    return newDoc.id;
+  }
+
+  Stream<List<InvestmentTransaction>> getInvestmentTransactions(String userId) {
+    return _db
+        .collection('users')
+        .doc(userId)
+        .collection('investment_transactions')
+        .orderBy('tradeDate', descending: true)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => InvestmentTransaction.fromMap(doc.data(), doc.id))
+              .toList(),
+        );
+  }
+
+  Future<List<InvestmentTransaction>> getInvestmentTransactionsOnce(
+    String userId,
+  ) async {
+    final snapshot = await _db
+        .collection('users')
+        .doc(userId)
+        .collection('investment_transactions')
+        .orderBy('tradeDate', descending: true)
+        .get();
+    return snapshot.docs
+        .map((doc) => InvestmentTransaction.fromMap(doc.data(), doc.id))
+        .toList();
+  }
+
+  Future<void> deleteInvestmentTransaction(
+    String userId,
+    String recordId,
+  ) async {
+    await _db
+        .collection('users')
+        .doc(userId)
+        .collection('investment_transactions')
+        .doc(recordId)
+        .delete();
+  }
+
+  Future<InvestmentTransaction?> findInvestmentDuplicate(
+    String userId,
+    InvestmentTransaction candidate,
+  ) async {
+    final colRef = _db
+        .collection('users')
+        .doc(userId)
+        .collection('investment_transactions');
+
+    if (candidate.confirmationNumber != null &&
+        candidate.confirmationNumber!.trim().isNotEmpty) {
+      final byConfirmation = await colRef
+          .where(
+            'confirmationNumber',
+            isEqualTo: candidate.confirmationNumber!.trim(),
+          )
+          .limit(1)
+          .get();
+      if (byConfirmation.docs.isNotEmpty) {
+        final doc = byConfirmation.docs.first;
+        return InvestmentTransaction.fromMap(doc.data(), doc.id);
+      }
+    }
+
+    final fallback = await colRef
+        .where('ticker', isEqualTo: candidate.ticker)
+        .where('transactionType', isEqualTo: candidate.transactionType.value)
+        .where('units', isEqualTo: candidate.units)
+        .where('totalCost', isEqualTo: candidate.totalCost)
+        .where('tradeDate', isEqualTo: Timestamp.fromDate(candidate.tradeDate))
+        .limit(1)
+        .get();
+    if (fallback.docs.isNotEmpty) {
+      final doc = fallback.docs.first;
+      return InvestmentTransaction.fromMap(doc.data(), doc.id);
+    }
+    return null;
   }
 }

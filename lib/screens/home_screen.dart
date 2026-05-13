@@ -12,6 +12,7 @@ import '../services/pdf_extraction_service.dart';
 import '../utils/file_exporter.dart';
 import '../widgets/stage_background.dart';
 import 'comparison_screen.dart';
+import 'investment_cgt_routes.dart';
 import 'worksheet_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -833,11 +834,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 case 'sync':
                   _syncQueuedDrafts();
                   break;
+                case 'investment':
+                  Navigator.pushNamed(context, InvestmentCgtRoutes.home);
+                  break;
                 default:
                   break;
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'investment',
+                child: Text('Investment CGT Tracker'),
+              ),
               PopupMenuItem(
                 value: 'compare',
                 child: Text('Trends & Comparison'),
@@ -897,6 +905,15 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           _buildUploadSection(),
+                          const SizedBox(height: 10),
+                          OutlinedButton.icon(
+                            onPressed: () => Navigator.pushNamed(
+                              context,
+                              InvestmentCgtRoutes.home,
+                            ),
+                            icon: const Icon(Icons.trending_up),
+                            label: const Text('Open Investment CGT Tracker'),
+                          ),
                           const SizedBox(height: 22),
                           Row(
                             children: [

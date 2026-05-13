@@ -6,6 +6,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
 import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/investment_cgt_calculation_setup_screen.dart';
+import 'screens/investment_cgt_home_screen.dart';
+import 'screens/investment_cgt_result_screen.dart';
+import 'screens/investment_cgt_routes.dart';
+import 'screens/investment_transaction_list_screen.dart';
+import 'screens/investment_transaction_upload_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,6 +51,24 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Tax Auto Extraction',
       debugShowCheckedModeBanner: false,
+      routes: {
+        InvestmentCgtRoutes.home: (_) => const InvestmentCgtHomeScreen(),
+        InvestmentCgtRoutes.upload: (_) =>
+            const InvestmentTransactionUploadScreen(),
+        InvestmentCgtRoutes.transactions: (_) =>
+            const InvestmentTransactionListScreen(),
+        InvestmentCgtRoutes.calculate: (_) =>
+            const InvestmentCgtCalculationSetupScreen(),
+      },
+      onGenerateRoute: (settings) {
+        if (settings.name == InvestmentCgtRoutes.results) {
+          final args = settings.arguments as InvestmentCgtResultArgs;
+          return MaterialPageRoute(
+            builder: (_) => InvestmentCgtResultScreen(args: args),
+          );
+        }
+        return null;
+      },
       theme: ThemeData(
         colorScheme: colorScheme,
         scaffoldBackgroundColor: const Color(0xFFF6F3EA),
