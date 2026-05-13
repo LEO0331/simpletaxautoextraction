@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simpletaxautoextraction/services/pdf_extraction_service.dart';
 
@@ -9,13 +10,13 @@ void main() {
 
   test('parses CommSec sample PDF from local filesystem', () async {
     if (samplePath == null || samplePath.isEmpty) {
-      print('Skipping: COMMSEC_SAMPLE_PDF_PATH is not set.');
+      debugPrint('Skipping: COMMSEC_SAMPLE_PDF_PATH is not set.');
       return;
     }
 
     final file = File(samplePath);
     if (!file.existsSync()) {
-      print('Skipping: sample PDF not found at $samplePath');
+      debugPrint('Skipping: sample PDF not found at $samplePath');
       return;
     }
 
