@@ -51,3 +51,6 @@ macos/Runner/GoogleService-Info.plist
 firebase.json
 .firebaserc
 .omx
+
+# Local PDF samples for parser integration tests (never commit personal docs)
+test/local_samples/*.pdf

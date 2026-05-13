@@ -25,6 +25,29 @@ class FirestoreService {
   FirestoreService({FirebaseFirestore? db})
     : _db = db ?? FirebaseFirestore.instance;
 
+  TaxRecord _normalizeTaxRecordForWrite(TaxRecord record) {
+    final propertyId = record.propertyId.trim().isEmpty
+        ? 'default'
+        : record.propertyId.trim();
+    final propertyName = record.propertyName.trim().isEmpty
+        ? 'Primary Property'
+        : record.propertyName.trim();
+    final notes = record.notes.length > 2000
+        ? record.notes.substring(0, 2000)
+        : record.notes;
+    final parserVersion = record.parserVersion.trim().isEmpty
+        ? 'v1'
+        : record.parserVersion.trim();
+
+    return record.copyWith(
+      propertyId: propertyId,
+      propertyName: propertyName,
+      notes: notes,
+      parserVersion: parserVersion,
+      lineItems: List<Map<String, dynamic>>.from(record.lineItems),
+    );
+  }
+
   Future<void> saveTaxRecord(TaxRecord record) async {
     await saveTaxRecordWithStrategy(record);
   }
@@ -34,33 +57,37 @@ class FirestoreService {
     bool saveAsNewYear = false,
     String? overrideFinancialYear,
   }) async {
+    final normalizedRecord = _normalizeTaxRecordForWrite(record);
     final colRef = _db
         .collection('users')
-        .doc(record.userId)
+        .doc(normalizedRecord.userId)
         .collection('tax_records');
-    final financialYear = overrideFinancialYear ?? record.financialYear;
+    final financialYear =
+        overrideFinancialYear ?? normalizedRecord.financialYear;
 
-    if (!saveAsNewYear && record.id != null && record.id!.isNotEmpty) {
-      await colRef.doc(record.id).set({
-        ...record.copyWith(financialYear: financialYear).toMap(),
+    if (!saveAsNewYear &&
+        normalizedRecord.id != null &&
+        normalizedRecord.id!.isNotEmpty) {
+      await colRef.doc(normalizedRecord.id).set({
+        ...normalizedRecord.copyWith(financialYear: financialYear).toMap(),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       return SaveTaxRecordResult(
-        documentId: record.id!,
+        documentId: normalizedRecord.id!,
         replacedExistingYear: false,
       );
     }
 
     final duplicate = await colRef
         .where('financialYear', isEqualTo: financialYear)
-        .where('propertyId', isEqualTo: record.propertyId)
+        .where('propertyId', isEqualTo: normalizedRecord.propertyId)
         .limit(1)
         .get();
 
     if (duplicate.docs.isNotEmpty && !saveAsNewYear) {
       final existingDoc = duplicate.docs.first;
       await existingDoc.reference.set({
-        ...record.copyWith(financialYear: financialYear).toMap(),
+        ...normalizedRecord.copyWith(financialYear: financialYear).toMap(),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       return SaveTaxRecordResult(
@@ -71,7 +98,9 @@ class FirestoreService {
 
     final newDoc = colRef.doc();
     await newDoc.set({
-      ...record.copyWith(id: newDoc.id, financialYear: financialYear).toMap(),
+      ...normalizedRecord
+          .copyWith(id: newDoc.id, financialYear: financialYear)
+          .toMap(),
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
