@@ -48,6 +48,24 @@ class FirestoreService {
     );
   }
 
+  InvestmentTransaction _normalizeInvestmentTransactionForWrite(
+    InvestmentTransaction transaction,
+  ) {
+    return transaction.copyWith(
+      ticker: transaction.ticker.trim().toUpperCase(),
+      securityName: transaction.securityName.trim(),
+      sourceParser: transaction.sourceParser.trim().isEmpty
+          ? 'CommSec Trade Confirmation Parser'
+          : transaction.sourceParser.trim(),
+      parserVersion: transaction.parserVersion.trim().isEmpty
+          ? 'v1'
+          : transaction.parserVersion.trim(),
+      notes: transaction.notes.length > 2000
+          ? transaction.notes.substring(0, 2000)
+          : transaction.notes,
+    );
+  }
+
   Future<void> saveTaxRecord(TaxRecord record) async {
     await saveTaxRecordWithStrategy(record);
   }
@@ -225,22 +243,26 @@ class FirestoreService {
   Future<String> saveInvestmentTransaction(
     InvestmentTransaction transaction,
   ) async {
+    final normalizedTransaction = _normalizeInvestmentTransactionForWrite(
+      transaction,
+    );
     final colRef = _db
         .collection('users')
-        .doc(transaction.userId)
+        .doc(normalizedTransaction.userId)
         .collection('investment_transactions');
 
-    if (transaction.id != null && transaction.id!.isNotEmpty) {
-      await colRef.doc(transaction.id).set({
-        ...transaction.toMap(),
+    if (normalizedTransaction.id != null &&
+        normalizedTransaction.id!.isNotEmpty) {
+      await colRef.doc(normalizedTransaction.id).set({
+        ...normalizedTransaction.toMap(),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-      return transaction.id!;
+      return normalizedTransaction.id!;
     }
 
     final newDoc = colRef.doc();
     await newDoc.set({
-      ...transaction.copyWith(id: newDoc.id).toMap(),
+      ...normalizedTransaction.copyWith(id: newDoc.id).toMap(),
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });

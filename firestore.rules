@@ -10,7 +10,7 @@ service cloud.firestore {
     }
 
     function validOptionalString(value, maxLen) {
-      return !(value is string) || value.size() <= maxLen;
+      return value == null || (value is string && value.size() <= maxLen);
     }
 
     function validTaxRecord(data, userId) {
@@ -76,7 +76,9 @@ service cloud.firestore {
           'sourceParser',
           'parserVersion',
           'notes',
-          'isLocked'
+          'isLocked',
+          'createdAt',
+          'updatedAt'
         ])
         && data.keys().hasOnly([
           'userId',
@@ -111,7 +113,7 @@ service cloud.firestore {
         && (data.averagePrice is number) && data.averagePrice > 0
         && (data.consideration is number) && data.consideration >= 0
         && (data.brokerage is number) && data.brokerage >= 0
-        && (!(data.gst is number) || data.gst >= 0)
+        && (data.gst == null || ((data.gst is number) && data.gst >= 0))
         && (data.totalCost is number) && data.totalCost > 0
         && validOptionalString(data.confirmationNumber, 64)
         && validOptionalString(data.accountNumber, 64)
@@ -119,11 +121,16 @@ service cloud.firestore {
         && validString(data.sourceParser, 120)
         && validString(data.parserVersion, 24)
         && (data.notes is string) && data.notes.size() <= 2000
-        && (data.isLocked is bool);
+        && (data.isLocked is bool)
+        && (data.createdAt is timestamp)
+        && (data.updatedAt is timestamp);
     }
 
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && request.resource.data.keys().hasOnly(['createdAt', 'updatedAt']);
+      allow delete: if false;
 
       match /tax_records/{recordId} {
         allow read, delete: if isOwner(userId);
@@ -134,6 +141,11 @@ service cloud.firestore {
       match /settings/{settingId} {
         allow read, write: if isOwner(userId)
           && settingId == "mappings"
+          && request.resource.data.keys().hasOnly([
+            'income',
+            'expense',
+            'updatedAt'
+          ])
           && request.resource.data.income is map
           && request.resource.data.expense is map;
       }
@@ -141,6 +153,11 @@ service cloud.firestore {
       match /properties/{propertyId} {
         allow read, delete: if isOwner(userId);
         allow create, update: if isOwner(userId)
+          && request.resource.data.keys().hasOnly([
+            'name',
+            'createdAt',
+            'updatedAt'
+          ])
           && validString(request.resource.data.name, 120);
       }
 

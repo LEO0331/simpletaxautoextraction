@@ -800,6 +800,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
+          TextButton.icon(
+            onPressed: () =>
+                Navigator.pushNamed(context, InvestmentCgtRoutes.home),
+            icon: const Icon(Icons.trending_up),
+            label: const Text('Investment CGT'),
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
               switch (value) {

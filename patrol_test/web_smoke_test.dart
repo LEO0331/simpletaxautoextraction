@@ -9,10 +9,19 @@ import 'package:patrol/patrol.dart';
 import 'package:simpletaxautoextraction/models/tax_record.dart';
 import 'package:simpletaxautoextraction/screens/auth_screen.dart';
 import 'package:simpletaxautoextraction/screens/home_screen.dart';
+import 'package:simpletaxautoextraction/screens/investment_cgt_calculation_setup_screen.dart';
+import 'package:simpletaxautoextraction/screens/investment_cgt_home_screen.dart';
+import 'package:simpletaxautoextraction/screens/investment_cgt_result_screen.dart';
+import 'package:simpletaxautoextraction/screens/investment_cgt_routes.dart';
+import 'package:simpletaxautoextraction/screens/investment_transaction_list_screen.dart';
+import 'package:simpletaxautoextraction/screens/investment_transaction_upload_screen.dart';
 import 'package:simpletaxautoextraction/services/auth_service.dart';
 import 'package:simpletaxautoextraction/services/draft_sync_service.dart';
 import 'package:simpletaxautoextraction/services/firestore_service.dart';
+import 'package:simpletaxautoextraction/services/parsers/commsec_trade_confirmation_parser.dart';
 import 'package:simpletaxautoextraction/services/pdf_extraction_service.dart';
+
+import 'package:simpletaxautoextraction/models/investment_transaction.dart';
 
 class _MockUser implements User {
   @override
@@ -78,6 +87,39 @@ class _FakePdfExtractionService extends PdfExtractionService {
       totalEntryCount: 1,
     );
   }
+
+  @override
+  Future<InvestmentExtractionResult> extractInvestmentTransactionFromPdf(
+    List<int> bytes, {
+    String? sourceFileName,
+  }) async {
+    return InvestmentExtractionResult(
+      draft: InvestmentTransactionDraft(
+        ticker: 'NDQ',
+        securityName: 'BETASHARES NASDAQ 100 ETF',
+        transactionType: InvestmentTransactionType.buy,
+        tradeDate: DateTime(2026, 3, 30),
+        settlementDate: DateTime(2026, 4, 1),
+        units: 80,
+        averagePrice: 49.66,
+        consideration: 3972.80,
+        brokerage: 7.94,
+        gst: 0.72,
+        totalCost: 3980.74,
+        confirmationNumber: 'sample-confirmation',
+        accountNumber: 'sample-account',
+        sourceFileName: sourceFileName,
+        sourceParser: CommsecTradeConfirmationParser.parserName,
+        parserVersion: CommsecTradeConfirmationParser.parserVersion,
+        notes: '',
+        needsReview: false,
+      ),
+      confidence: 1,
+      missingFields: const [],
+      warnings: const [],
+      rawText: 'redacted test fixture',
+    );
+  }
 }
 
 class _FakeFilePicker extends FilePicker {
@@ -124,9 +166,8 @@ void main() {
   });
 
   patrolTest('auth sign-up toggle flow', ($) async {
-    await $.tester.pumpWidget(
-      MaterialApp(home: AuthScreen(authService: _MockAuthService())),
-    );
+    final auth = _MockAuthService();
+    await $.tester.pumpWidget(MaterialApp(home: AuthScreen(authService: auth)));
     await $.pumpAndSettle();
 
     expect(find.text('Welcome Back'), findsOneWidget);
@@ -135,6 +176,15 @@ void main() {
 
     expect(find.text('Create Account'), findsOneWidget);
     expect(find.text('Already have an account? Sign In'), findsOneWidget);
+    await $.tester.enterText(
+      find.byType(TextField).at(0),
+      'investment-cgt-test@example.invalid',
+    );
+    await $.tester.enterText(find.byType(TextField).at(1), 'TestPassword123!');
+    await $.tester.tap(find.text('Sign Up'));
+    await $.pumpAndSettle();
+
+    expect(auth.isCreateCalled, isTrue);
   });
 
   patrolTest('pdf upload flow to worksheet', ($) async {
@@ -241,5 +291,102 @@ void main() {
       find.textContaining('Income vs Expenses vs Net Position'),
       findsOneWidget,
     );
+  });
+
+  patrolTest('investment cgt tracker upload save and calculate flow', (
+    $,
+  ) async {
+    FilePicker.platform = _FakeFilePicker(
+      pickResult: FilePickerResult([
+        PlatformFile(
+          name: 'commsec-trade-confirmation.pdf',
+          size: 5,
+          bytes: Uint8List.fromList([1, 2, 3, 4, 5]),
+        ),
+      ]),
+    );
+
+    final authService = _MockAuthService();
+    final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
+    final pdfService = _FakePdfExtractionService();
+
+    await $.tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(
+          authService: authService,
+          firestoreService: firestoreService,
+          pdfExtractionService: pdfService,
+        ),
+        routes: {
+          InvestmentCgtRoutes.home: (_) => const InvestmentCgtHomeScreen(),
+          InvestmentCgtRoutes.upload: (_) => InvestmentTransactionUploadScreen(
+            authService: authService,
+            firestoreService: firestoreService,
+            pdfExtractionService: pdfService,
+          ),
+          InvestmentCgtRoutes.transactions: (_) =>
+              InvestmentTransactionListScreen(
+                authService: authService,
+                firestoreService: firestoreService,
+              ),
+          InvestmentCgtRoutes.calculate: (_) =>
+              InvestmentCgtCalculationSetupScreen(
+                authService: authService,
+                firestoreService: firestoreService,
+              ),
+        },
+        onGenerateRoute: (settings) {
+          if (settings.name == InvestmentCgtRoutes.results) {
+            return MaterialPageRoute(
+              builder: (_) => InvestmentCgtResultScreen(
+                args: settings.arguments as InvestmentCgtResultArgs,
+              ),
+            );
+          }
+          return null;
+        },
+      ),
+    );
+    await $.pumpAndSettle();
+
+    await $.tester.tap(find.text('Investment CGT'));
+    await $.pumpAndSettle();
+    await $.tester.tap(find.text('Upload trade confirmation PDFs'));
+    await $.pumpAndSettle();
+    await $.tester.tap(find.text('Upload PDFs'));
+    await $.pumpAndSettle();
+
+    expect(find.text('commsec-trade-confirmation.pdf'), findsOneWidget);
+    await $.tester.tap(find.text('Review'));
+    await $.pumpAndSettle();
+    expect(find.text('Review Investment Transaction'), findsOneWidget);
+    expect(find.text('NDQ'), findsOneWidget);
+    await $.tester.drag(find.byType(ListView), const Offset(0, -800));
+    await $.pumpAndSettle();
+    await $.tester.tap(find.text('Save'));
+    await $.pumpAndSettle();
+    expect(find.text('Investment transaction saved.'), findsOneWidget);
+
+    Navigator.of($.tester.element(find.text('Upload Investment PDFs'))).pop();
+    await $.pumpAndSettle();
+    await $.tester.tap(find.text('View saved transactions'));
+    await $.pumpAndSettle();
+    expect(find.textContaining('NDQ'), findsOneWidget);
+
+    Navigator.of($.tester.element(find.text('Investment Transactions'))).pop();
+    await $.pumpAndSettle();
+    await $.tester.tap(find.text('Run CGT estimate'));
+    await $.pumpAndSettle();
+    await $.tester.tap(find.text('Select cut-off date'));
+    await $.pumpAndSettle();
+    await $.tester.tap(find.text('13').last);
+    await $.tester.tap(find.text('OK'));
+    await $.pumpAndSettle();
+    await $.tester.enterText(find.byType(TextField).first, '75');
+    await $.tester.tap(find.text('Calculate'));
+    await $.pumpAndSettle();
+
+    expect(find.textContaining('Investment CGT Results'), findsOneWidget);
+    expect(find.textContaining('Estimated gain/loss'), findsOneWidget);
   });
 }
