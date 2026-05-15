@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/investment_cgt_calculation.dart';
-import '../models/investment_cgt_summary.dart';
 import '../models/investment_transaction.dart';
+import '../services/investment_cgt_calculator.dart';
 import '../services/export_service.dart';
 import '../utils/file_exporter.dart';
-import '../utils/investment_cgt_utils.dart';
 
 class InvestmentCgtResultArgs {
   final DateTime cutOffDate;
@@ -23,85 +22,19 @@ class InvestmentCgtResultArgs {
 class InvestmentCgtResultScreen extends StatelessWidget {
   final InvestmentCgtResultArgs args;
   final ExportService _exportService = ExportService();
+  final InvestmentCgtCalculator _calculator = const InvestmentCgtCalculator();
 
   InvestmentCgtResultScreen({super.key, required this.args});
 
-  List<InvestmentCgtCalculation> _buildCalculations() {
-    final result = <InvestmentCgtCalculation>[];
-    for (final t in args.transactions.where((e) => e.isBuy)) {
-      final cutPrice = args.tickerPrices[t.ticker];
-      if (cutPrice == null || cutPrice <= 0) {
-        continue;
-      }
-      if (args.cutOffDate.isBefore(t.tradeDate)) {
-        continue;
-      }
-      final holdingDays = calculateHoldingDays(t.tradeDate, args.cutOffDate);
-      final marketValue = calculateMarketValue(t.units, cutPrice);
-      final gainLoss = calculateGainLoss(marketValue, t.totalCost);
-      final gainLossPct = calculateGainLossPercent(gainLoss, t.totalCost);
-      final eligible = isPotentialCgtDiscountEligible(holdingDays);
-      final taxable = calculateEstimatedTaxableGainAfterDiscount(
-        gainLoss,
-        eligible,
-      );
-      result.add(
-        InvestmentCgtCalculation(
-          transaction: t,
-          cutOffDate: args.cutOffDate,
-          cutOffPrice: cutPrice,
-          holdingDays: holdingDays,
-          marketValueAtCutOff: marketValue,
-          estimatedGainLoss: gainLoss,
-          gainLossPercent: gainLossPct,
-          potentialCgtDiscountEligible: eligible,
-          estimatedTaxableGainAfterDiscount: taxable,
-        ),
-      );
-    }
-    return result;
-  }
-
-  InvestmentCgtSummary _summary(List<InvestmentCgtCalculation> calculations) {
-    double totalCost = 0;
-    double totalValue = 0;
-    double totalGainLoss = 0;
-    double eligibleGains = 0;
-    double nonEligibleGains = 0;
-    double taxableAfterDiscount = 0;
-    double losses = 0;
-
-    for (final c in calculations) {
-      totalCost += c.transaction.totalCost;
-      totalValue += c.marketValueAtCutOff;
-      totalGainLoss += c.estimatedGainLoss;
-      taxableAfterDiscount += c.estimatedTaxableGainAfterDiscount;
-      if (c.estimatedGainLoss > 0) {
-        if (c.potentialCgtDiscountEligible) {
-          eligibleGains += c.estimatedGainLoss;
-        } else {
-          nonEligibleGains += c.estimatedGainLoss;
-        }
-      } else {
-        losses += c.estimatedGainLoss.abs();
-      }
-    }
-
-    return InvestmentCgtSummary(
-      totalCostBase: totalCost,
-      totalMarketValueAtCutOff: totalValue,
-      totalEstimatedGainLoss: totalGainLoss,
-      totalPotentialDiscountEligibleGains: eligibleGains,
-      totalNotEligibleGains: nonEligibleGains,
-      totalEstimatedTaxableGainAfterDiscount: taxableAfterDiscount,
-      totalEstimatedCapitalLosses: losses,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final calculations = _buildCalculations();
-    final summary = _summary(calculations);
+    final session = _calculator.calculate(
+      cutOffDate: args.cutOffDate,
+      tickerPrices: args.tickerPrices,
+      transactions: args.transactions,
+    );
+    final calculations = session.calculations;
+    final summary = session.summary;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Investment CGT Results')),

@@ -43,19 +43,27 @@ class InvestmentTransactionDraft {
   });
 
   InvestmentTransaction toTransaction(String userId) {
+    final validationErrors = validateForTransaction();
+    if (validationErrors.isNotEmpty) {
+      throw StateError(
+        'Cannot create investment transaction from incomplete draft: '
+        '${validationErrors.join(', ')}',
+      );
+    }
+
     return InvestmentTransaction(
       userId: userId,
       ticker: ticker,
       securityName: securityName,
       transactionType: transactionType,
-      tradeDate: tradeDate ?? DateTime.now(),
+      tradeDate: tradeDate!,
       settlementDate: settlementDate,
-      units: units ?? 0,
-      averagePrice: averagePrice ?? 0,
+      units: units!,
+      averagePrice: averagePrice!,
       consideration: consideration ?? 0,
       brokerage: brokerage ?? 0,
       gst: gst,
-      totalCost: totalCost ?? ((consideration ?? 0) + (brokerage ?? 0)),
+      totalCost: totalCost!,
       confirmationNumber: confirmationNumber,
       accountNumber: accountNumber,
       sourceFileName: sourceFileName,
@@ -64,6 +72,19 @@ class InvestmentTransactionDraft {
       notes: notes,
       isLocked: false,
     );
+  }
+
+  List<String> validateForTransaction() {
+    final errors = <String>[];
+    if (ticker.trim().isEmpty) errors.add('ticker');
+    if (securityName.trim().isEmpty) errors.add('securityName');
+    if (tradeDate == null) errors.add('tradeDate');
+    if (units == null || units! <= 0) errors.add('units');
+    if (averagePrice == null || averagePrice! <= 0) {
+      errors.add('averagePrice');
+    }
+    if (totalCost == null || totalCost! <= 0) errors.add('totalCost');
+    return errors;
   }
 }
 

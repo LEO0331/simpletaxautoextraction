@@ -105,4 +105,13 @@ TRADE CONFIRMATION
     expect(result.missingFields, isNotEmpty);
     expect(result.draft.needsReview, isTrue);
   });
+
+  test('draft conversion rejects incomplete parsed data', () {
+    const sample = 'BUY\nTRADE DATE 30/03/2026\n';
+    final parser = CommsecTradeConfirmationParser();
+    final result = parser.parse(sample);
+
+    expect(result.draft.validateForTransaction(), contains('ticker'));
+    expect(() => result.draft.toTransaction('u1'), throwsA(isA<StateError>()));
+  });
 }
