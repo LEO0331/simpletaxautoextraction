@@ -115,6 +115,11 @@ void main() {
   testWidgets('creates account and completes investment cgt tracker flow', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1200));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+    });
+
     final authService = _MockAuthService();
 
     await tester.pumpWidget(
@@ -184,38 +189,55 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Investment CGT'));
+    final trackerEntry = find.text('Investment CGT');
+    await tester.ensureVisible(trackerEntry);
+    await tester.tap(trackerEntry);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Upload trade confirmation PDFs'));
+    final uploadEntry = find.text('Upload trade confirmation PDFs');
+    await tester.ensureVisible(uploadEntry);
+    await tester.tap(uploadEntry);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Upload PDFs'));
+    final uploadButton = find.text('Upload PDFs');
+    await tester.ensureVisible(uploadButton);
+    await tester.tap(uploadButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Review'));
+    final reviewButton = find.text('Review');
+    await tester.ensureVisible(reviewButton);
+    await tester.tap(reviewButton);
     await tester.pumpAndSettle();
     expect(find.text('Review Investment Transaction'), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, -800));
+    final saveButton = find.text('Save');
+    await tester.ensureVisible(saveButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save'));
+    await tester.tap(saveButton);
     await tester.pumpAndSettle();
     expect(find.text('Investment transaction saved.'), findsOneWidget);
 
     Navigator.of(tester.element(find.text('Upload Investment PDFs'))).pop();
     await tester.pumpAndSettle();
-    await tester.tap(find.text('View saved transactions'));
+    final transactionsEntry = find.text('View saved transactions');
+    await tester.ensureVisible(transactionsEntry);
+    await tester.tap(transactionsEntry);
     await tester.pumpAndSettle();
     expect(find.textContaining('NDQ'), findsOneWidget);
 
     Navigator.of(tester.element(find.text('Investment Transactions'))).pop();
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Run CGT estimate'));
+    final calculateEntry = find.text('Run CGT estimate');
+    await tester.ensureVisible(calculateEntry);
+    await tester.tap(calculateEntry);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Select cut-off date'));
+    final dateButton = find.text('Select cut-off date');
+    await tester.ensureVisible(dateButton);
+    await tester.tap(dateButton);
     await tester.pumpAndSettle();
     await tester.tap(find.text('13').last);
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, '75');
-    await tester.tap(find.text('Calculate'));
+    final calculateButton = find.text('Calculate');
+    await tester.ensureVisible(calculateButton);
+    await tester.tap(calculateButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Investment CGT Results'), findsOneWidget);

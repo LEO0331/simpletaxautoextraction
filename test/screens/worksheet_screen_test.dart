@@ -19,16 +19,21 @@ class MockFirestoreService implements FirestoreService {
 }
 
 void main() {
+  Future<void> setLargeTestSurface(WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+  }
+
   Widget buildApp(TaxRecord record, FirestoreService firestoreService) {
     return MaterialApp(
-      home: WorksheetScreen(
-        record: record,
-        firestoreService: firestoreService,
-      ),
+      home: WorksheetScreen(record: record, firestoreService: firestoreService),
     );
   }
 
-  testWidgets('WorksheetScreen displays total income and expenses correctly', (WidgetTester tester) async {
+  testWidgets('WorksheetScreen displays total income and expenses correctly', (
+    WidgetTester tester,
+  ) async {
+    await setLargeTestSurface(tester);
     final record = TaxRecord(
       userId: 'user1',
       financialYear: '2024-2025',
@@ -45,7 +50,10 @@ void main() {
     expect(find.text('\$800.00'), findsOneWidget); // Net Position
   });
 
-  testWidgets('WorksheetScreen updates total when input changes', (WidgetTester tester) async {
+  testWidgets('WorksheetScreen updates total when input changes', (
+    WidgetTester tester,
+  ) async {
+    await setLargeTestSurface(tester);
     final record = TaxRecord.empty('user1', '2024-2025');
     final mockFirestore = MockFirestoreService();
 
@@ -60,17 +68,25 @@ void main() {
     await tester.enterText(rentField, '500');
     await tester.pumpAndSettle();
 
-    expect(find.text('\$500.00'), findsWidgets); // Updated text field value AND the summary
+    expect(
+      find.text('\$500.00'),
+      findsWidgets,
+    ); // Updated text field value AND the summary
   });
 
-  testWidgets('WorksheetScreen saves record when Save Data is pressed', (WidgetTester tester) async {
+  testWidgets('WorksheetScreen saves record when Save Data is pressed', (
+    WidgetTester tester,
+  ) async {
+    await setLargeTestSurface(tester);
     final record = TaxRecord.empty('user1', '2024-2025');
     final mockFirestore = MockFirestoreService();
 
     await tester.pumpWidget(buildApp(record, mockFirestore));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Save Data'));
+    final saveButton = find.text('Save Data');
+    await tester.ensureVisible(saveButton);
+    await tester.tap(saveButton);
     await tester.pumpAndSettle();
 
     expect(mockFirestore.isSaved, isTrue);

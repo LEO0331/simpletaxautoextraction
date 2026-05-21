@@ -208,6 +208,7 @@ void main() {
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final fakeDb = FakeFirebaseFirestore();
     final firestoreService = FirestoreService(db: fakeDb);
 
@@ -235,7 +236,9 @@ void main() {
     await tester.pumpWidget(buildApp(firestoreService));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Upload Property Summary PDF'));
+    final uploadButton = find.text('Upload Property Summary PDF');
+    await tester.ensureVisible(uploadButton);
+    await tester.tap(uploadButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Select Financial Year'), findsOneWidget);
@@ -244,7 +247,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
 
     expect(find.text('Import Preview'), findsOneWidget);
-    await tester.tap(find.text('Continue to Worksheet'));
+    final continueToWorksheet = find.text('Continue to Worksheet');
+    await tester.ensureVisible(continueToWorksheet);
+    await tester.tap(continueToWorksheet);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
 
@@ -255,7 +260,6 @@ void main() {
 
     expect(find.textContaining('Tax Worksheet'), findsOneWidget);
     expect(find.text('Extracted Transaction Details'), findsOneWidget);
-    await tester.binding.setSurfaceSize(null);
   });
 
   testWidgets('custom mapping dialog saves mappings', (tester) async {
@@ -339,6 +343,7 @@ void main() {
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
     FilePicker.platform = _FakeFilePicker(
       pickResult: FilePickerResult([
@@ -359,7 +364,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Upload Property Summary PDF'));
+    final uploadButton = find.text('Upload Property Summary PDF');
+    await tester.ensureVisible(uploadButton);
+    await tester.tap(uploadButton);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Continue'));
     await tester.pump();
@@ -370,12 +377,13 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Continue to Worksheet'));
+    final continueToWorksheet = find.text('Continue to Worksheet');
+    await tester.ensureVisible(continueToWorksheet);
+    await tester.tap(continueToWorksheet);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
 
     expect(find.textContaining('Tax Worksheet'), findsOneWidget);
-    await tester.binding.setSurfaceSize(null);
   });
 
   testWidgets('add property updates selected property', (tester) async {

@@ -31,9 +31,15 @@ class _NoopFirestoreService implements FirestoreService {
 }
 
 void main() {
+  Future<void> setLargeTestSurface(WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+  }
+
   testWidgets('locked worksheet blocks direct save and displays line items', (
     tester,
   ) async {
+    await setLargeTestSurface(tester);
     final record = TaxRecord.empty('u1', '2024-2025').copyWith(
       isLocked: true,
       lineItems: const [
@@ -61,7 +67,9 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Save Data'));
+    final saveButton = find.text('Save Data');
+    await tester.ensureVisible(saveButton);
+    await tester.tap(saveButton);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('This record is locked'), findsOneWidget);
@@ -75,6 +83,7 @@ void main() {
   testWidgets('save as new year validates input then saves copy', (
     tester,
   ) async {
+    await setLargeTestSurface(tester);
     final service = _NoopFirestoreService();
     final record = TaxRecord.empty('u1', '2024-2025');
     await tester.pumpWidget(
@@ -84,7 +93,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.content_copy));
+    final copyButton = find.byIcon(Icons.content_copy);
+    await tester.ensureVisible(copyButton);
+    await tester.tap(copyButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Save As New Financial Year'), findsOneWidget);
@@ -111,6 +122,7 @@ void main() {
   testWidgets('save failure queues draft and shows retry action', (
     tester,
   ) async {
+    await setLargeTestSurface(tester);
     final service = _NoopFirestoreService()..shouldThrowOnSave = true;
     final record = TaxRecord.empty('u1', '2024-2025');
     await tester.pumpWidget(
@@ -120,7 +132,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.save));
+    final saveButton = find.byIcon(Icons.save);
+    await tester.ensureVisible(saveButton);
+    await tester.tap(saveButton);
     await tester.pumpAndSettle();
 
     expect(
@@ -131,6 +145,7 @@ void main() {
   });
 
   testWidgets('expense input updates totals while unlocked', (tester) async {
+    await setLargeTestSurface(tester);
     final service = _NoopFirestoreService();
     final record = TaxRecord.empty('u1', '2024-2025');
     await tester.pumpWidget(
