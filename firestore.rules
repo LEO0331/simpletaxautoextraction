@@ -139,7 +139,8 @@ service cloud.firestore {
       }
 
       match /settings/{settingId} {
-        allow read, write: if isOwner(userId)
+        allow read: if isOwner(userId) && settingId == "mappings";
+        allow create, update: if isOwner(userId)
           && settingId == "mappings"
           && request.resource.data.keys().hasOnly([
             'income',
@@ -148,6 +149,7 @@ service cloud.firestore {
           ])
           && request.resource.data.income is map
           && request.resource.data.expense is map;
+        allow delete: if false;
       }
 
       match /properties/{propertyId} {

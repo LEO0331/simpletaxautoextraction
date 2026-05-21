@@ -107,45 +107,35 @@ class PdfExtractionService {
     Map<String, String>? customIncomeMappings,
     Map<String, String>? customExpenseMappings,
   }) async {
-    try {
-      final document = PdfDocument(inputBytes: bytes);
-      final textExtractor = PdfTextExtractor(document);
-      final extractedText = textExtractor.extractText();
-      document.dispose();
+    final document = PdfDocument(inputBytes: bytes);
+    final textExtractor = PdfTextExtractor(document);
+    final extractedText = textExtractor.extractText();
+    document.dispose();
 
-      return parseExtractedTextWithMetadata(
-        extractedText,
-        userId,
-        financialYear,
-        propertyId: propertyId,
-        propertyName: propertyName,
-        sourceFileName: sourceFileName,
-        customIncomeMappings: customIncomeMappings,
-        customExpenseMappings: customExpenseMappings,
-      );
-    } catch (e) {
-      debugPrint('Error extracting PDF: $e');
-      rethrow;
-    }
+    return parseExtractedTextWithMetadata(
+      extractedText,
+      userId,
+      financialYear,
+      propertyId: propertyId,
+      propertyName: propertyName,
+      sourceFileName: sourceFileName,
+      customIncomeMappings: customIncomeMappings,
+      customExpenseMappings: customExpenseMappings,
+    );
   }
 
   Future<InvestmentExtractionResult> extractInvestmentTransactionFromPdf(
     List<int> bytes, {
     String? sourceFileName,
   }) async {
-    try {
-      final document = PdfDocument(inputBytes: bytes);
-      final textExtractor = PdfTextExtractor(document);
-      final extractedText = textExtractor.extractText();
-      document.dispose();
-      return _investmentParser.parse(
-        extractedText,
-        sourceFileName: sourceFileName,
-      );
-    } catch (e) {
-      debugPrint('Error extracting investment PDF: $e');
-      rethrow;
-    }
+    final document = PdfDocument(inputBytes: bytes);
+    final textExtractor = PdfTextExtractor(document);
+    final extractedText = textExtractor.extractText();
+    document.dispose();
+    return _investmentParser.parse(
+      extractedText,
+      sourceFileName: sourceFileName,
+    );
   }
 
   TaxRecord parseExtractedText(
