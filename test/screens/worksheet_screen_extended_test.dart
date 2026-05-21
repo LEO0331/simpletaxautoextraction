@@ -67,9 +67,7 @@ void main() {
       findsOneWidget,
     );
 
-    final saveButton = find.text('Save Data');
-    await tester.ensureVisible(saveButton);
-    await tester.tap(saveButton);
+    await tester.tap(find.byTooltip('Save Record'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('This record is locked'), findsOneWidget);
@@ -93,9 +91,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final copyButton = find.byIcon(Icons.content_copy);
-    await tester.ensureVisible(copyButton);
-    await tester.tap(copyButton);
+    await tester.tap(find.byTooltip('Save As New Year'));
     await tester.pumpAndSettle();
 
     expect(find.text('Save As New Financial Year'), findsOneWidget);
@@ -132,9 +128,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final saveButton = find.byIcon(Icons.save);
-    await tester.ensureVisible(saveButton);
-    await tester.tap(saveButton);
+    await tester.tap(find.byTooltip('Save Record'));
     await tester.pumpAndSettle();
 
     expect(

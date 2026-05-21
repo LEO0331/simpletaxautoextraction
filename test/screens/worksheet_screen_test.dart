@@ -84,9 +84,7 @@ void main() {
     await tester.pumpWidget(buildApp(record, mockFirestore));
     await tester.pumpAndSettle();
 
-    final saveButton = find.text('Save Data');
-    await tester.ensureVisible(saveButton);
-    await tester.tap(saveButton);
+    await tester.tap(find.byTooltip('Save Record'));
     await tester.pumpAndSettle();
 
     expect(mockFirestore.isSaved, isTrue);

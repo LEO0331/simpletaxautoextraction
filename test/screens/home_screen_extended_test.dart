@@ -236,9 +236,7 @@ void main() {
     await tester.pumpWidget(buildApp(firestoreService));
     await tester.pumpAndSettle();
 
-    final uploadButton = find.text('Upload Property Summary PDF');
-    await tester.ensureVisible(uploadButton);
-    await tester.tap(uploadButton);
+    await tester.tap(find.text('Upload Property Summary PDF'));
     await tester.pumpAndSettle();
 
     expect(find.text('Select Financial Year'), findsOneWidget);
@@ -248,7 +246,6 @@ void main() {
 
     expect(find.text('Import Preview'), findsOneWidget);
     final continueToWorksheet = find.text('Continue to Worksheet');
-    await tester.ensureVisible(continueToWorksheet);
     await tester.tap(continueToWorksheet);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
@@ -364,9 +361,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final uploadButton = find.text('Upload Property Summary PDF');
-    await tester.ensureVisible(uploadButton);
-    await tester.tap(uploadButton);
+    await tester.tap(find.text('Upload Property Summary PDF'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Continue'));
     await tester.pump();
@@ -378,7 +373,6 @@ void main() {
     );
 
     final continueToWorksheet = find.text('Continue to Worksheet');
-    await tester.ensureVisible(continueToWorksheet);
     await tester.tap(continueToWorksheet);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));

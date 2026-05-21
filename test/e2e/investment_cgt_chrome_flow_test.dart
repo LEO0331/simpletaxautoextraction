@@ -190,7 +190,6 @@ void main() {
     await tester.pumpAndSettle();
 
     final trackerEntry = find.text('Investment CGT');
-    await tester.ensureVisible(trackerEntry);
     await tester.tap(trackerEntry);
     await tester.pumpAndSettle();
     final uploadEntry = find.text('Upload trade confirmation PDFs');
@@ -198,7 +197,6 @@ void main() {
     await tester.tap(uploadEntry);
     await tester.pumpAndSettle();
     final uploadButton = find.text('Upload PDFs');
-    await tester.ensureVisible(uploadButton);
     await tester.tap(uploadButton);
     await tester.pumpAndSettle();
     final reviewButton = find.text('Review');
