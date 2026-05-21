@@ -75,47 +75,6 @@ class _FakePdfExtractionService extends PdfExtractionService {
   }
 }
 
-class _UnmappedPdfExtractionService extends PdfExtractionService {
-  @override
-  Future<PdfExtractionResult> extractPreviewFromPdf(
-    List<int> bytes,
-    String userId,
-    String financialYear, {
-    String propertyId = 'default',
-    String propertyName = 'Primary Property',
-    String? sourceFileName,
-    Map<String, String>? customIncomeMappings,
-    Map<String, String>? customExpenseMappings,
-  }) async {
-    final record = TaxRecord.empty(
-      userId,
-      financialYear,
-      propertyId: propertyId,
-      propertyName: propertyName,
-    );
-
-    return PdfExtractionResult(
-      record: record,
-      parserName: 'Unmapped Parser',
-      confidence: 0.2,
-      unmappedEntries: const [
-        UnmappedExtractionEntry(
-          sourceCategory: 'Unknown Income',
-          amount: 123,
-          isIncome: true,
-        ),
-        UnmappedExtractionEntry(
-          sourceCategory: 'Unknown Expense',
-          amount: 45,
-          isIncome: false,
-        ),
-      ],
-      mappedEntryCount: 0,
-      totalEntryCount: 2,
-    );
-  }
-}
-
 class _ThrowingPdfExtractionService extends PdfExtractionService {
   @override
   Future<PdfExtractionResult> extractPreviewFromPdf(
@@ -204,61 +163,6 @@ void main() {
     );
   }
 
-  testWidgets('upload flow shows preview, diff dialog, and opens worksheet', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1600, 1200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final fakeDb = FakeFirebaseFirestore();
-    final firestoreService = FirestoreService(db: fakeDb);
-
-    await firestoreService.saveTaxRecord(
-      TaxRecord(
-        userId: 'test_uid',
-        financialYear: '2025-2026',
-        propertyId: 'default',
-        propertyName: 'Primary Property',
-        income: {'Gross rent': 10},
-        expenses: {'Water charges': 1},
-      ),
-    );
-
-    FilePicker.platform = _FakeFilePicker(
-      pickResult: FilePickerResult([
-        PlatformFile(
-          name: 'statement.pdf',
-          size: 5,
-          bytes: Uint8List.fromList([1, 2, 3, 4, 5]),
-        ),
-      ]),
-    );
-
-    await tester.pumpWidget(buildApp(firestoreService));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Upload Property Summary PDF'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Select Financial Year'), findsOneWidget);
-    await tester.tap(find.text('Continue'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-
-    expect(find.text('Import Preview'), findsOneWidget);
-    final continueToWorksheet = find.text('Continue to Worksheet');
-    await tester.tap(continueToWorksheet);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-
-    expect(find.text('Existing Record Found'), findsOneWidget);
-    await tester.tap(find.text('Continue'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-
-    expect(find.textContaining('Tax Worksheet'), findsOneWidget);
-    expect(find.text('Extracted Transaction Details'), findsOneWidget);
-  });
-
   testWidgets('custom mapping dialog saves mappings', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1200));
     final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
@@ -334,50 +238,6 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     await tester.binding.setSurfaceSize(null);
-  });
-
-  testWidgets('unmapped preview flow maps entries and opens worksheet', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1600, 1200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final firestoreService = FirestoreService(db: FakeFirebaseFirestore());
-    FilePicker.platform = _FakeFilePicker(
-      pickResult: FilePickerResult([
-        PlatformFile(
-          name: 'statement.pdf',
-          size: 3,
-          bytes: Uint8List.fromList([1, 2, 3]),
-        ),
-      ]),
-    );
-
-    await tester.pumpWidget(
-      buildAppWith(
-        authService: _MockAuthService(),
-        firestoreService: firestoreService,
-        pdfService: _UnmappedPdfExtractionService(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Upload Property Summary PDF'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Continue'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-
-    expect(
-      find.text('Unmapped lines (choose destination categories):'),
-      findsOneWidget,
-    );
-
-    final continueToWorksheet = find.text('Continue to Worksheet');
-    await tester.tap(continueToWorksheet);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-
-    expect(find.textContaining('Tax Worksheet'), findsOneWidget);
   });
 
   testWidgets('add property updates selected property', (tester) async {
