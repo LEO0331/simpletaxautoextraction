@@ -32,6 +32,8 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+playwright-report/
+test-results/
 
 # Symbolication related
 app.*.symbols
