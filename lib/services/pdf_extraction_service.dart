@@ -23,8 +23,27 @@ class PdfExtractionResult {
   final List<UnmappedExtractionEntry> unmappedEntries;
   final int mappedEntryCount;
   final int totalEntryCount;
-  final List<String> validationErrors;
+  final List<String> _validationErrors;
   final String? detectedFinancialYear;
+
+  List<String> get validationErrors => List.unmodifiable([
+    ..._validationErrors,
+    if (detectedFinancialYear != null &&
+        detectedFinancialYear != record.financialYear)
+      'The report covers FY $detectedFinancialYear. Use the detected financial year below.',
+  ]);
+
+  PdfExtractionResult withFinancialYear(String financialYear) =>
+      PdfExtractionResult(
+        record: record.copyWith(financialYear: financialYear),
+        parserName: parserName,
+        confidence: confidence,
+        unmappedEntries: unmappedEntries,
+        mappedEntryCount: mappedEntryCount,
+        totalEntryCount: totalEntryCount,
+        validationErrors: _validationErrors,
+        detectedFinancialYear: detectedFinancialYear,
+      );
 
   bool get isSafeToImport => totalEntryCount > 0 && validationErrors.isEmpty;
 
@@ -35,9 +54,9 @@ class PdfExtractionResult {
     required this.unmappedEntries,
     required this.mappedEntryCount,
     required this.totalEntryCount,
-    this.validationErrors = const [],
+    List<String> validationErrors = const [],
     this.detectedFinancialYear,
-  });
+  }) : _validationErrors = validationErrors;
 }
 
 class _ParseStats {
@@ -200,12 +219,6 @@ class PdfExtractionService {
     final detectedFinancialYear = period == null
         ? null
         : '${period[1]}-${period[2]}';
-    if (detectedFinancialYear != null &&
-        detectedFinancialYear != financialYear) {
-      validationErrors.add(
-        'The report covers FY $detectedFinancialYear. Cancel and select that financial year.',
-      );
-    }
     final stats = _ParseStats();
     final record = TaxRecord.empty(
       userId,
@@ -557,8 +570,12 @@ class PdfExtractionService {
         ? customIncomeMappings
         : customExpenseMappings;
     for (final entry in customMappings.entries) {
-      if (normalized.contains(entry.key.toLowerCase())) {
-        return entry.value;
+      if (entry.key.trim().isNotEmpty &&
+          normalized.contains(entry.key.toLowerCase())) {
+        final categories = isIncome
+            ? TaxRecord.incomeCategoryOptions
+            : TaxRecord.expenseCategoryOptions;
+        return categories.contains(entry.value) ? entry.value : null;
       }
     }
 

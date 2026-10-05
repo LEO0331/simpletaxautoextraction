@@ -65,6 +65,7 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
   }
 
   Future<void> _saveRecord({bool saveAsNewYear = false}) async {
+    if (_isSaving) return;
     if (_isLocked && !saveAsNewYear) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -95,20 +96,11 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
     );
 
     try {
-      SaveTaxRecordResult result;
-      if (saveAsNewYear) {
-        result = await _firestoreService.saveTaxRecordWithStrategy(
-          recordToSave,
-          saveAsNewYear: true,
-          overrideFinancialYear: targetYear,
-        );
-      } else {
-        await _firestoreService.saveTaxRecord(recordToSave);
-        result = SaveTaxRecordResult(
-          documentId: recordToSave.id ?? '',
-          replacedExistingYear: false,
-        );
-      }
+      final result = await _firestoreService.saveTaxRecordWithStrategy(
+        recordToSave,
+        saveAsNewYear: saveAsNewYear,
+        overrideFinancialYear: targetYear,
+      );
 
       if (!mounted) {
         return;
@@ -133,7 +125,25 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
       if (!saveAsNewYear) {
         Navigator.of(context).pop();
       }
+    } on DuplicateTaxRecordException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     } catch (e) {
+      // Copies must not be queued as normal updates: a later sync could
+      // overwrite the source record or an existing target-year record.
+      if (saveAsNewYear) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Could not save the copy. Your worksheet is still available: $e',
+            ),
+          ),
+        );
+        return;
+      }
       DraftSyncService.instance.queueDraft(recordToSave);
       if (!mounted) {
         return;
@@ -176,8 +186,8 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
               ),
               content: SizedBox(
                 width: 360,
-                child: TextField(
-                  controller: TextEditingController(text: inputYear),
+                child: TextFormField(
+                  initialValue: inputYear,
                   onChanged: (value) {
                     setDialogState(() {
                       inputYear = value.trim();
@@ -204,6 +214,13 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                       setDialogState(() {
                         errorText =
                             'Use YYYY-YYYY and ensure end year is start+1.';
+                      });
+                      return;
+                    }
+                    if (normalized == _activeRecord.financialYear) {
+                      setDialogState(() {
+                        errorText =
+                            'Choose a different financial year for the copy.';
                       });
                       return;
                     }
@@ -283,17 +300,20 @@ class _WorksheetScreenState extends State<WorksheetScreen> {
                         horizontal: 10,
                         vertical: 4,
                       ),
-                      child: SwitchListTile(
-                        title: const Text('Lock this financial year'),
-                        subtitle: const Text(
-                          'Locked records can only be copied to a new year.',
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: SwitchListTile(
+                          title: const Text('Lock this financial year'),
+                          subtitle: const Text(
+                            'Locked records can only be copied to a new year.',
+                          ),
+                          value: _isLocked,
+                          onChanged: (val) {
+                            setState(() {
+                              _isLocked = val;
+                            });
+                          },
                         ),
-                        value: _isLocked,
-                        onChanged: (val) {
-                          setState(() {
-                            _isLocked = val;
-                          });
-                        },
                       ),
                     ),
                     const SizedBox(height: 12),

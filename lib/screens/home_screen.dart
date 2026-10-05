@@ -227,6 +227,20 @@ class _HomeScreenState extends State<HomeScreen> {
         'Expenses: \$${existing.totalExpenses.toStringAsFixed(2)} -> \$${candidate.totalExpenses.toStringAsFixed(2)}',
       );
     }
+    for (final isIncome in [true, false]) {
+      final before = isIncome ? existing.income : existing.expenses;
+      final after = isIncome ? candidate.income : candidate.expenses;
+      final categories = {...before.keys, ...after.keys}.toList()..sort();
+      for (final category in categories) {
+        final oldAmount = before[category] ?? 0.0;
+        final newAmount = after[category] ?? 0.0;
+        if (oldAmount != newAmount) {
+          diffs.add(
+            '${isIncome ? 'Income' : 'Expense'} - $category: \$${oldAmount.toStringAsFixed(2)} -> \$${newAmount.toStringAsFixed(2)}',
+          );
+        }
+      }
+    }
     if (existing.lineItems.length != candidate.lineItems.length) {
       diffs.add(
         'Transaction line items: ${existing.lineItems.length} -> ${candidate.lineItems.length}',
@@ -239,30 +253,32 @@ class _HomeScreenState extends State<HomeScreen> {
             title: Text('Existing Record Found', style: GoogleFonts.inter()),
             content: SizedBox(
               width: 520,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'FY ${candidate.financialYear} already exists for ${candidate.propertyName}.',
-                    style: GoogleFonts.inter(),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Potential changes:',
-                    style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  if (diffs.isEmpty)
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      'No numeric difference detected.',
+                      'FY ${candidate.financialYear} already exists for ${candidate.propertyName}.',
                       style: GoogleFonts.inter(),
-                    )
-                  else
-                    ...diffs.map(
-                      (diff) => Text('• $diff', style: GoogleFonts.inter()),
                     ),
-                ],
+                    const SizedBox(height: 12),
+                    Text(
+                      'Potential changes:',
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    if (diffs.isEmpty)
+                      Text(
+                        'No numeric difference detected.',
+                        style: GoogleFonts.inter(),
+                      )
+                    else
+                      ...diffs.map(
+                        (diff) => Text('• $diff', style: GoogleFonts.inter()),
+                      ),
+                  ],
+                ),
               ),
             ),
             actions: [
@@ -287,72 +303,89 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final incomeController = TextEditingController(
-      text: _customIncomeMappings.entries
-          .map((e) => '${e.key}=${e.value}')
-          .join('\n'),
-    );
-    final expenseController = TextEditingController(
-      text: _customExpenseMappings.entries
-          .map((e) => '${e.key}=${e.value}')
-          .join('\n'),
-    );
+    var incomeText = _customIncomeMappings.entries
+        .map((e) => '${e.key}=${e.value}')
+        .join('\n');
+    var expenseText = _customExpenseMappings.entries
+        .map((e) => '${e.key}=${e.value}')
+        .join('\n');
+    Map<String, String> income = {};
+    Map<String, String> expense = {};
+    String? mappingError;
 
     final saved = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Custom Mapping Rules', style: GoogleFonts.inter()),
-        content: SizedBox(
-          width: 620,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Format: keyword=ATO Category', style: GoogleFonts.inter()),
-              const SizedBox(height: 10),
-              Text(
-                'Income Rules',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: incomeController,
-                maxLines: 6,
-                decoration: const InputDecoration(border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Expense Rules',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 6),
-              TextField(
-                controller: expenseController,
-                maxLines: 8,
-                decoration: const InputDecoration(border: OutlineInputBorder()),
-              ),
-            ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Custom Mapping Rules', style: GoogleFonts.inter()),
+          content: SizedBox(
+            width: 620,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Format: keyword=ATO Category',
+                  style: GoogleFonts.inter(),
+                ),
+                if (mappingError != null)
+                  Text(mappingError!, style: TextStyle(color: Colors.red[700])),
+                const SizedBox(height: 10),
+                Text(
+                  'Income Rules',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                TextFormField(
+                  initialValue: incomeText,
+                  onChanged: (value) => incomeText = value,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Expense Rules',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                TextFormField(
+                  initialValue: expenseText,
+                  onChanged: (value) => expenseText = value,
+                  maxLines: 8,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                try {
+                  income = _parseMappings(incomeText, isIncome: true);
+                  expense = _parseMappings(expenseText, isIncome: false);
+                  Navigator.pop(context, true);
+                } on FormatException catch (error) {
+                  setDialogState(() => mappingError = error.message);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
 
     if (saved != true) {
       return;
     }
-
-    final income = _parseMappings(incomeController.text);
-    final expense = _parseMappings(expenseController.text);
 
     await _firestoreService.saveCustomMappings(user.uid, income, expense);
     if (!mounted) {
@@ -367,12 +400,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _showSnackBar('Custom mappings saved.');
   }
 
-  Map<String, String> _parseMappings(String text) {
+  Map<String, String> _parseMappings(String text, {required bool isIncome}) {
     final mappings = <String, String>{};
+    final categories = isIncome
+        ? TaxRecord.incomeCategoryOptions
+        : TaxRecord.expenseCategoryOptions;
     final lines = text.split('\n');
     for (final line in lines) {
+      if (line.trim().isEmpty) continue;
       if (!line.contains('=')) {
-        continue;
+        throw const FormatException('Each rule must use keyword=ATO Category.');
       }
       final split = line.split('=');
       if (split.length < 2) {
@@ -380,8 +417,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       final key = split.first.trim();
       final value = split.sublist(1).join('=').trim();
-      if (key.isEmpty || value.isEmpty) {
-        continue;
+      if (key.isEmpty || !categories.contains(value)) {
+        throw FormatException(
+          'Unsupported ${isIncome ? 'income' : 'expense'} category "$value" for "$key". Use a category from the worksheet.',
+        );
       }
       mappings[key] = value;
     }
@@ -608,6 +647,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         'Parser: ${preview.parserName}',
                         style: GoogleFonts.inter(),
                       ),
+                      Text('Financial year: ${preview.record.financialYear}'),
+                      if (preview.detectedFinancialYear != null &&
+                          preview.detectedFinancialYear !=
+                              preview.record.financialYear)
+                        TextButton(
+                          onPressed: () => setDialogState(() {
+                            preview = preview.withFinancialYear(
+                              preview.detectedFinancialYear!,
+                            );
+                          }),
+                          child: Text(
+                            'Use FY ${preview.detectedFinancialYear}',
+                          ),
+                        ),
                       const SizedBox(height: 6),
                       Text(
                         'Confidence: $confidencePercent% (${preview.mappedEntryCount}/${preview.totalEntryCount} mapped)',
@@ -651,11 +704,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               final options = item.isIncome
                                   ? TaxRecord.incomeCategoryOptions
                                   : TaxRecord.expenseCategoryOptions;
-                              final selectedValue =
-                                  selectedMappings[index] ??
-                                  (!item.isIncome
-                                      ? 'Sundry rental expenses'
-                                      : null);
+                              final selectedValue = selectedMappings[index];
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -716,9 +765,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed:
                       !preview.isSafeToImport ||
                           preview.unmappedEntries.asMap().entries.any(
-                            (entry) =>
-                                entry.value.isIncome &&
-                                selectedMappings[entry.key] == null,
+                            (entry) => selectedMappings[entry.key] == null,
                           )
                       ? null
                       : () {
@@ -729,6 +776,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             expenses: Map<String, double>.from(
                               preview.record.expenses,
                             ),
+                            lineItems: preview.record.lineItems
+                                .map((line) => Map<String, dynamic>.from(line))
+                                .toList(),
                           );
 
                           for (
@@ -737,14 +787,19 @@ class _HomeScreenState extends State<HomeScreen> {
                             i++
                           ) {
                             final item = preview.unmappedEntries[i];
-                            final mappedCategory =
-                                selectedMappings[i] ??
-                                (!item.isIncome
-                                    ? 'Sundry rental expenses'
-                                    : null);
+                            final mappedCategory = selectedMappings[i]!;
 
-                            if (mappedCategory == null) {
-                              continue;
+                            // Match one source line at a time so duplicate rows
+                            // retain their independently reviewed categories.
+                            for (final line in adjustedRecord.lineItems) {
+                              if (line['mappedCategory'] == 'UNMAPPED' &&
+                                  line['sourceCategory'] ==
+                                      item.sourceCategory &&
+                                  line['amount'] == item.amount &&
+                                  line['isIncome'] == item.isIncome) {
+                                line['mappedCategory'] = mappedCategory;
+                                break;
+                              }
                             }
 
                             if (item.isIncome) {

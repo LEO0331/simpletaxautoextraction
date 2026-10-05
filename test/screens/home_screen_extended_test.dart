@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simpletaxautoextraction/models/tax_record.dart';
 import 'package:simpletaxautoextraction/screens/home_screen.dart';
+import 'package:simpletaxautoextraction/screens/worksheet_screen.dart';
 import 'package:simpletaxautoextraction/services/auth_service.dart';
 import 'package:simpletaxautoextraction/services/draft_sync_service.dart';
 import 'package:simpletaxautoextraction/services/firestore_service.dart';
@@ -143,7 +144,12 @@ void main() {
     DraftSyncService.instance.clearPendingDrafts();
   });
 
-  for (final scenario in ['empty', 'invalid', 'unmapped income']) {
+  for (final scenario in [
+    'empty',
+    'invalid',
+    'unmapped income',
+    'unmapped expense',
+  ]) {
     testWidgets('import preview blocks $scenario extraction', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1400, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -157,7 +163,16 @@ void main() {
         ]),
       );
       final preview = PdfExtractionResult(
-        record: TaxRecord.empty('test_uid', '2025-2026'),
+        record: TaxRecord.empty('test_uid', '2025-2026').copyWith(
+          lineItems: [
+            {
+              'sourceCategory': 'Unknown receipt',
+              'amount': 50.0,
+              'isIncome': scenario == 'unmapped income',
+              'mappedCategory': 'UNMAPPED',
+            },
+          ],
+        ),
         parserName: 'Test',
         confidence: 0,
         mappedEntryCount: 0,
@@ -165,12 +180,12 @@ void main() {
         validationErrors: scenario == 'invalid'
             ? ['Subtotal does not reconcile.']
             : [],
-        unmappedEntries: scenario == 'unmapped income'
+        unmappedEntries: scenario.startsWith('unmapped')
             ? [
-                const UnmappedExtractionEntry(
+                UnmappedExtractionEntry(
                   sourceCategory: 'Unknown receipt',
                   amount: 50,
-                  isIncome: true,
+                  isIncome: scenario == 'unmapped income',
                 ),
               ]
             : [],
@@ -213,11 +228,14 @@ void main() {
       if (scenario == 'invalid') {
         expect(find.text('Subtotal does not reconcile.'), findsOneWidget);
       }
-      if (scenario == 'unmapped income') {
+      if (scenario.startsWith('unmapped')) {
         await tester.tap(find.byType(DropdownButtonFormField<String>).last);
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
-        await tester.tap(find.text('Other rental-related income').last);
+        final category = scenario == 'unmapped income'
+            ? 'Other rental-related income'
+            : 'Repairs and maintenance';
+        await tester.tap(find.text(category).last);
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         expect(
@@ -228,9 +246,23 @@ void main() {
               .onPressed,
           isNotNull,
         );
+        await tester.tap(find.text('Continue to Worksheet'));
+        await tester.pumpAndSettle();
+        final reviewed = tester
+            .widget<WorksheetScreen>(find.byType(WorksheetScreen))
+            .record;
+        expect(reviewed.lineItems.single['mappedCategory'], category);
+        expect(preview.record.lineItems.single['mappedCategory'], 'UNMAPPED');
+        expect(
+          scenario == 'unmapped income'
+              ? reviewed.totalIncome
+              : reviewed.totalExpenses,
+          50,
+        );
+      } else {
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
       }
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
     });
   }
 
@@ -257,6 +289,230 @@ void main() {
       ),
     );
   }
+
+  Future<void> openPreview(
+    WidgetTester tester,
+    FirestoreService service,
+    PdfExtractionResult preview,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    FilePicker.platform = _FakeFilePicker(
+      pickResult: FilePickerResult([
+        PlatformFile(
+          name: 'statement.pdf',
+          size: 3,
+          bytes: Uint8List.fromList([1, 2, 3]),
+        ),
+      ]),
+    );
+    await tester.pumpWidget(
+      buildAppWith(
+        authService: _MockAuthService(),
+        firestoreService: service,
+        pdfService: _FakePdfExtractionService(previewOverride: preview),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Upload Property Summary PDF'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+  }
+
+  for (final hasOtherError in [false, true]) {
+    testWidgets(
+      'year correction preserves other validation errors=$hasOtherError',
+      (tester) async {
+        await openPreview(
+          tester,
+          FirestoreService(db: FakeFirebaseFirestore()),
+          PdfExtractionResult(
+            record: TaxRecord.empty('test_uid', '2026-2027'),
+            parserName: 'Test',
+            confidence: 1,
+            unmappedEntries: [],
+            mappedEntryCount: 1,
+            totalEntryCount: 1,
+            detectedFinancialYear: '2025-2026',
+            validationErrors: hasOtherError
+                ? ['Subtotal does not reconcile.']
+                : [],
+          ),
+        );
+        expect(
+          tester
+              .widget<ElevatedButton>(
+                find.widgetWithText(ElevatedButton, 'Continue to Worksheet'),
+              )
+              .onPressed,
+          isNull,
+        );
+        await tester.tap(find.text('Use FY 2025-2026'));
+        await tester.pump();
+        expect(find.text('Financial year: 2025-2026'), findsOneWidget);
+        expect(
+          tester
+              .widget<ElevatedButton>(
+                find.widgetWithText(ElevatedButton, 'Continue to Worksheet'),
+              )
+              .onPressed,
+          hasOtherError ? isNull : isNotNull,
+        );
+        if (hasOtherError) {
+          expect(find.text('Subtotal does not reconcile.'), findsOneWidget);
+          await tester.tap(find.text('Cancel'));
+        } else {
+          await tester.tap(find.text('Continue to Worksheet'));
+        }
+        await tester.pumpAndSettle();
+        if (!hasOtherError) {
+          expect(
+            tester
+                .widget<WorksheetScreen>(find.byType(WorksheetScreen))
+                .record
+                .financialYear,
+            '2025-2026',
+          );
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'overwrite preview detects category reallocations with equal totals',
+    (tester) async {
+      final service = FirestoreService(db: FakeFirebaseFirestore());
+      await service.saveTaxRecord(
+        TaxRecord(
+          userId: 'test_uid',
+          financialYear: '2025-2026',
+          income: {'Gross rent': 100},
+        ),
+      );
+      await openPreview(
+        tester,
+        service,
+        PdfExtractionResult(
+          record: TaxRecord(
+            userId: 'test_uid',
+            financialYear: '2025-2026',
+            income: {'Other rental-related income': 100},
+          ),
+          parserName: 'Test',
+          confidence: 1,
+          unmappedEntries: [],
+          mappedEntryCount: 1,
+          totalEntryCount: 1,
+        ),
+      );
+      await tester.tap(find.text('Continue to Worksheet'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        find.textContaining('Gross rent: \$100.00 -> \$0.00'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Other rental-related income: \$0.00 -> \$100.00'),
+        findsOneWidget,
+      );
+      expect(find.text('No numeric difference detected.'), findsNothing);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets('identical source rows retain independent reviewed mappings', (
+    tester,
+  ) async {
+    final record = TaxRecord.empty('test_uid', '2025-2026').copyWith(
+      lineItems: [
+        for (var i = 0; i < 2; i++)
+          {
+            'sourceCategory': 'Unknown cost',
+            'amount': 50.0,
+            'isIncome': false,
+            'mappedCategory': 'UNMAPPED',
+          },
+      ],
+    );
+    await openPreview(
+      tester,
+      FirestoreService(db: FakeFirebaseFirestore()),
+      PdfExtractionResult(
+        record: record,
+        parserName: 'Test',
+        confidence: 0,
+        mappedEntryCount: 0,
+        totalEntryCount: 2,
+        unmappedEntries: [
+          for (var i = 0; i < 2; i++)
+            const UnmappedExtractionEntry(
+              sourceCategory: 'Unknown cost',
+              amount: 50,
+              isIncome: false,
+            ),
+        ],
+      ),
+    );
+    for (var i = 0; i < 2; i++) {
+      final dropdown = find
+          .descendant(
+            of: find.ancestor(
+              of: find.text('Import Preview'),
+              matching: find.byType(AlertDialog),
+            ),
+            matching: find.byType(DropdownButtonFormField<String>),
+          )
+          .at(i);
+      await tester.tap(dropdown);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.tap(
+        find.text(i == 0 ? 'Insurance' : 'Repairs and maintenance').last,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.tap(find.text('Continue to Worksheet'));
+    await tester.pumpAndSettle();
+    final reviewed = tester
+        .widget<WorksheetScreen>(find.byType(WorksheetScreen))
+        .record;
+    expect(reviewed.expenses['Insurance'], 50);
+    expect(reviewed.expenses['Repairs and maintenance'], 50);
+    expect(reviewed.lineItems.map((line) => line['mappedCategory']), [
+      'Insurance',
+      'Repairs and maintenance',
+    ]);
+  });
+
+  testWidgets('mapping editor keeps invalid rules open for correction', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = FirestoreService(db: FakeFirebaseFirestore());
+    await tester.pumpWidget(buildApp(service));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom Mapping Rules'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'rent=Insurance');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Unsupported income category'), findsOneWidget);
+    expect((await service.getCustomMappings('test_uid'))['income'], isEmpty);
+    await tester.enterText(find.byType(TextField).first, 'rent=Gross rent');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect((await service.getCustomMappings('test_uid'))['income'], {
+      'rent': 'Gross rent',
+    });
+  });
 
   testWidgets('custom mapping dialog saves mappings', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1200));

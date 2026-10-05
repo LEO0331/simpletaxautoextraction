@@ -91,6 +91,10 @@ void main() {
     );
     expect(result.isSafeToImport, isFalse);
     expect(result.validationErrors.single, contains('2025-2026'));
+    final corrected = result.withFinancialYear('2025-2026');
+    expect(corrected.isSafeToImport, isTrue);
+    expect(corrected.record.totalIncome, result.record.totalIncome);
+    expect(result.record.financialYear, '2026-2027');
   });
   test('rejects monthly row with a wrong annual total', () {
     final result = service.parseExtractedTextWithMetadata(
@@ -100,6 +104,8 @@ void main() {
     );
     expect(result.isSafeToImport, isFalse);
     expect(result.validationErrors, contains(contains('Monthly amounts')));
+    final wrongYear = result.withFinancialYear('2026-2027');
+    expect(wrongYear.withFinancialYear('2025-2026').isSafeToImport, isFalse);
   });
   test('rejects missing data and missing subtotals', () {
     final result = service.parseExtractedTextWithMetadata(
@@ -133,5 +139,22 @@ void main() {
       result.unmappedEntries.where((entry) => entry.isIncome).single.amount,
       560,
     );
+  });
+  test('invalid stored custom mappings produce reviewable entries', () {
+    final result = service.parseExtractedTextWithMetadata(
+      monthlyReport(),
+      'test',
+      '2025-2026',
+      customIncomeMappings: {'rent': 'Insurance'},
+      customExpenseMappings: {'locks': 'Nonexistent category'},
+    );
+    expect(result.record.income['Gross rent'], 0);
+    expect(result.record.income.containsKey('Insurance'), isFalse);
+    expect(result.record.expenses.containsKey('Nonexistent category'), isFalse);
+    expect(
+      result.unmappedEntries.where((entry) => entry.isIncome).single.amount,
+      32564.05,
+    );
+    expect(result.validationErrors, isEmpty);
   });
 }

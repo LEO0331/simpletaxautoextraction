@@ -19,6 +19,17 @@ class PropertyInfo {
   const PropertyInfo({required this.id, required this.name});
 }
 
+class DuplicateTaxRecordException implements Exception {
+  final String financialYear;
+  final String propertyName;
+
+  const DuplicateTaxRecordException(this.financialYear, this.propertyName);
+
+  @override
+  String toString() =>
+      'FY $financialYear already exists for $propertyName. Open that record to update it or choose another year.';
+}
+
 class FirestoreService {
   final FirebaseFirestore _db;
 
@@ -102,6 +113,13 @@ class FirestoreService {
         .limit(1)
         .get();
 
+    if (duplicate.docs.isNotEmpty && saveAsNewYear) {
+      throw DuplicateTaxRecordException(
+        financialYear,
+        normalizedRecord.propertyName,
+      );
+    }
+
     if (duplicate.docs.isNotEmpty && !saveAsNewYear) {
       final existingDoc = duplicate.docs.first;
       await existingDoc.reference.set({
@@ -170,6 +188,19 @@ class FirestoreService {
     Map<String, String> incomeMappings,
     Map<String, String> expenseMappings,
   ) async {
+    for (final isIncome in [true, false]) {
+      final mappings = isIncome ? incomeMappings : expenseMappings;
+      final categories = isIncome
+          ? TaxRecord.incomeCategoryOptions
+          : TaxRecord.expenseCategoryOptions;
+      for (final rule in mappings.entries) {
+        if (rule.key.trim().isEmpty || !categories.contains(rule.value)) {
+          throw FormatException(
+            'Invalid ${isIncome ? 'income' : 'expense'} mapping: ${rule.key}=${rule.value}',
+          );
+        }
+      }
+    }
     await _db
         .collection('users')
         .doc(userId)

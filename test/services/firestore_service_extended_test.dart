@@ -64,6 +64,101 @@ void main() {
       expect(miss, isNull);
     });
 
+    test(
+      'new-year copies reject an existing target without changing either record',
+      () async {
+        final source = TaxRecord(
+          userId: 'u1',
+          financialYear: '2024-2025',
+          propertyId: 'p1',
+          income: {'Gross rent': 100},
+        );
+        final sourceSave = await service.saveTaxRecordWithStrategy(source);
+        final target = source.copyWith(
+          financialYear: '2025-2026',
+          income: {'Gross rent': 200},
+        );
+        await service.saveTaxRecord(target);
+        await expectLater(
+          service.saveTaxRecordWithStrategy(
+            source.copyWith(id: sourceSave.documentId),
+            saveAsNewYear: true,
+            overrideFinancialYear: '2025-2026',
+          ),
+          throwsA(isA<DuplicateTaxRecordException>()),
+        );
+        final records = await service.getUserTaxRecords('u1').first;
+        expect(records.length, 2);
+        expect(
+          records
+              .singleWhere((r) => r.financialYear == '2024-2025')
+              .totalIncome,
+          100,
+        );
+        expect(
+          records
+              .singleWhere((r) => r.financialYear == '2025-2026')
+              .totalIncome,
+          200,
+        );
+      },
+    );
+
+    test(
+      'new-year copy permits a different property and rejects a repeated copy',
+      () async {
+        await service.saveTaxRecord(
+          TaxRecord(userId: 'u1', financialYear: '2025-2026', propertyId: 'p1'),
+        );
+        final source = TaxRecord(
+          userId: 'u1',
+          financialYear: '2024-2025',
+          propertyId: 'p2',
+        );
+        await service.saveTaxRecordWithStrategy(
+          source,
+          saveAsNewYear: true,
+          overrideFinancialYear: '2025-2026',
+        );
+        await expectLater(
+          service.saveTaxRecordWithStrategy(
+            source,
+            saveAsNewYear: true,
+            overrideFinancialYear: '2025-2026',
+          ),
+          throwsA(isA<DuplicateTaxRecordException>()),
+        );
+        expect((await service.getUserTaxRecords('u1').first).length, 2);
+      },
+    );
+
+    test(
+      'invalid or cross-type custom mappings cannot replace valid settings',
+      () async {
+        await service.saveCustomMappings(
+          'u1',
+          {'rent': 'Gross rent'},
+          {'locks': 'Repairs and maintenance'},
+        );
+        for (final badIncome in [
+          {'rent': 'Insurance'},
+          {'': 'Gross rent'},
+        ]) {
+          await expectLater(
+            service.saveCustomMappings('u1', badIncome, {}),
+            throwsFormatException,
+          );
+        }
+        await expectLater(
+          service.saveCustomMappings('u1', {}, {'locks': 'Made up category'}),
+          throwsFormatException,
+        );
+        final settings = await service.getCustomMappings('u1');
+        expect(settings['income'], {'rent': 'Gross rent'});
+        expect(settings['expense'], {'locks': 'Repairs and maintenance'});
+      },
+    );
+
     test('custom mappings and property streams persist', () async {
       const userId = 'u1';
       await service.saveCustomMappings(
