@@ -618,8 +618,18 @@ class _HomeScreenState extends State<HomeScreen> {
                         'Parsed transactions: ${preview.record.lineItems.length}',
                         style: GoogleFonts.inter(color: Colors.grey[700]),
                       ),
+                      Text(
+                        'Extracted income: \$${(preview.record.totalIncome + preview.unmappedEntries.where((entry) => entry.isIncome).fold<double>(0, (sum, entry) => sum + entry.amount)).toStringAsFixed(2)}',
+                      ),
+                      Text(
+                        'Extracted expenses: \$${(preview.record.totalExpenses + preview.unmappedEntries.where((entry) => !entry.isIncome).fold<double>(0, (sum, entry) => sum + entry.amount)).toStringAsFixed(2)}',
+                      ),
                       const SizedBox(height: 12),
-                      if (preview.unmappedEntries.isEmpty)
+                      if (preview.totalEntryCount == 0)
+                        const Text(
+                          'No transactions were extracted. This report cannot be imported automatically.',
+                        )
+                      else if (preview.unmappedEntries.isEmpty)
                         Text(
                           'All extracted lines were mapped automatically.',
                           style: GoogleFonts.inter(color: Colors.green[700]),
@@ -685,6 +695,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       ],
+                      for (final error in preview.validationErrors)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            error,
+                            style: TextStyle(color: Colors.red[700]),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -695,37 +713,55 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    final adjustedRecord = preview.record.copyWith(
-                      income: Map<String, double>.from(preview.record.income),
-                      expenses: Map<String, double>.from(
-                        preview.record.expenses,
-                      ),
-                    );
+                  onPressed:
+                      !preview.isSafeToImport ||
+                          preview.unmappedEntries.asMap().entries.any(
+                            (entry) =>
+                                entry.value.isIncome &&
+                                selectedMappings[entry.key] == null,
+                          )
+                      ? null
+                      : () {
+                          final adjustedRecord = preview.record.copyWith(
+                            income: Map<String, double>.from(
+                              preview.record.income,
+                            ),
+                            expenses: Map<String, double>.from(
+                              preview.record.expenses,
+                            ),
+                          );
 
-                    for (int i = 0; i < preview.unmappedEntries.length; i++) {
-                      final item = preview.unmappedEntries[i];
-                      final mappedCategory =
-                          selectedMappings[i] ??
-                          (!item.isIncome ? 'Sundry rental expenses' : null);
+                          for (
+                            int i = 0;
+                            i < preview.unmappedEntries.length;
+                            i++
+                          ) {
+                            final item = preview.unmappedEntries[i];
+                            final mappedCategory =
+                                selectedMappings[i] ??
+                                (!item.isIncome
+                                    ? 'Sundry rental expenses'
+                                    : null);
 
-                      if (mappedCategory == null) {
-                        continue;
-                      }
+                            if (mappedCategory == null) {
+                              continue;
+                            }
 
-                      if (item.isIncome) {
-                        adjustedRecord.income[mappedCategory] =
-                            (adjustedRecord.income[mappedCategory] ?? 0.0) +
-                            item.amount;
-                      } else {
-                        adjustedRecord.expenses[mappedCategory] =
-                            (adjustedRecord.expenses[mappedCategory] ?? 0.0) +
-                            item.amount;
-                      }
-                    }
+                            if (item.isIncome) {
+                              adjustedRecord.income[mappedCategory] =
+                                  (adjustedRecord.income[mappedCategory] ??
+                                      0.0) +
+                                  item.amount;
+                            } else {
+                              adjustedRecord.expenses[mappedCategory] =
+                                  (adjustedRecord.expenses[mappedCategory] ??
+                                      0.0) +
+                                  item.amount;
+                            }
+                          }
 
-                    Navigator.pop(context, adjustedRecord);
-                  },
+                          Navigator.pop(context, adjustedRecord);
+                        },
                   child: const Text('Continue to Worksheet'),
                 ),
               ],

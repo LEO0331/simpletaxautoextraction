@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
+
 import '../models/tax_record.dart';
 import 'parsers/commsec_trade_confirmation_parser.dart';
 
@@ -22,6 +23,10 @@ class PdfExtractionResult {
   final List<UnmappedExtractionEntry> unmappedEntries;
   final int mappedEntryCount;
   final int totalEntryCount;
+  final List<String> validationErrors;
+  final String? detectedFinancialYear;
+
+  bool get isSafeToImport => totalEntryCount > 0 && validationErrors.isEmpty;
 
   const PdfExtractionResult({
     required this.record,
@@ -30,6 +35,8 @@ class PdfExtractionResult {
     required this.unmappedEntries,
     required this.mappedEntryCount,
     required this.totalEntryCount,
+    this.validationErrors = const [],
+    this.detectedFinancialYear,
   });
 }
 
@@ -173,8 +180,32 @@ class PdfExtractionService {
     Map<String, String>? customIncomeMappings,
     Map<String, String>? customExpenseMappings,
   }) {
-    final lines = text.split('\n').map((line) => line.trim()).toList();
+    final lines = text
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .split('\n')
+        .map((line) => line.trim())
+        .toList();
     final layout = _pickLayout(lines);
+    final monthly =
+        layout == _forgeLayout &&
+        RegExp(
+          r'Jul\s+Aug\s+Sep\s+Oct\s+Nov\s+Dec\s+Jan\s+Feb\s+Mar\s+Apr\s+May\s+Jun\s+Total',
+          caseSensitive: false,
+        ).hasMatch(lines.join(' '));
+    final validationErrors = <String>[];
+    final period = RegExp(
+      r'Date\s+1/0?7/(\d{4})\s+to\s+30/0?6/(\d{4})',
+    ).firstMatch(text);
+    final detectedFinancialYear = period == null
+        ? null
+        : '${period[1]}-${period[2]}';
+    if (detectedFinancialYear != null &&
+        detectedFinancialYear != financialYear) {
+      validationErrors.add(
+        'The report covers FY $detectedFinancialYear. Cancel and select that financial year.',
+      );
+    }
     final stats = _ParseStats();
     final record = TaxRecord.empty(
       userId,
@@ -183,15 +214,27 @@ class PdfExtractionService {
       propertyName: propertyName,
     );
 
-    _parseWithLayout(
-      lines,
-      layout,
-      record,
-      stats,
-      keepUnknownAsSundry: keepUnknownAsSundry,
-      customIncomeMappings: customIncomeMappings ?? const {},
-      customExpenseMappings: customExpenseMappings ?? const {},
-    );
+    if (monthly) {
+      _parseMonthlyForge(
+        lines,
+        record,
+        stats,
+        validationErrors,
+        keepUnknownAsSundry: keepUnknownAsSundry,
+        customIncomeMappings: customIncomeMappings ?? const {},
+        customExpenseMappings: customExpenseMappings ?? const {},
+      );
+    } else {
+      _parseWithLayout(
+        lines,
+        layout,
+        record,
+        stats,
+        keepUnknownAsSundry: keepUnknownAsSundry,
+        customIncomeMappings: customIncomeMappings ?? const {},
+        customExpenseMappings: customExpenseMappings ?? const {},
+      );
+    }
 
     final confidence = stats.totalEntryCount == 0
         ? 0.0
@@ -201,7 +244,7 @@ class PdfExtractionService {
       record: record.copyWith(
         sourceFileName: sourceFileName,
         sourceParser: layout.name,
-        parserVersion: 'v2',
+        parserVersion: monthly ? 'v3-monthly' : 'v2',
         lineItems: stats.lineItems,
       ),
       parserName: layout.name,
@@ -209,8 +252,125 @@ class PdfExtractionService {
       unmappedEntries: List.unmodifiable(stats.unmappedEntries),
       mappedEntryCount: stats.mappedEntryCount,
       totalEntryCount: stats.totalEntryCount,
+      validationErrors: List.unmodifiable(validationErrors),
+      detectedFinancialYear: detectedFinancialYear,
     );
   }
+
+  // Monthly statements already include GST. Read the annual column once,
+  // and reconcile both each row and the section totals before allowing import.
+  void _parseMonthlyForge(
+    List<String> lines,
+    TaxRecord record,
+    _ParseStats stats,
+    List<String> errors, {
+    required bool keepUnknownAsSundry,
+    required Map<String, String> customIncomeMappings,
+    required Map<String, String> customExpenseMappings,
+  }) {
+    bool? isIncome;
+    String? category;
+    final values = <double>[];
+    final sourceTotals = <bool, double>{true: 0, false: 0};
+    final reportedTotals = <bool, double>{};
+    final number = RegExp(r'\(?-?\$?\d[\d,]*\.\d{2}\)?');
+
+    void finishRow() {
+      if (category == null) return;
+      if (values.length != 13) {
+        errors.add(
+          'Incomplete monthly row: $category (expected 12 months and an annual total).',
+        );
+      } else {
+        final annual = values.last;
+        final months = values.take(12).fold<double>(0, (sum, v) => sum + v);
+        if ((months * 100).round() != (annual * 100).round()) {
+          errors.add(
+            'Monthly amounts do not match the annual total for $category.',
+          );
+        }
+        sourceTotals[isIncome!] = sourceTotals[isIncome]! + annual;
+        _applyAmount(
+          record,
+          stats,
+          category,
+          annual,
+          isIncome: isIncome,
+          keepUnknownAsSundry: keepUnknownAsSundry,
+          customIncomeMappings: customIncomeMappings,
+          customExpenseMappings: customExpenseMappings,
+        );
+      }
+      category = null;
+      values.clear();
+    }
+
+    for (final line in lines) {
+      if (line == 'Property Income' || line == 'Property Expenses') {
+        finishRow();
+        isIncome = line == 'Property Income';
+        continue;
+      }
+      if (line.startsWith('(GST Total:')) {
+        finishRow();
+        isIncome = null;
+        continue;
+      }
+      if (line.startsWith('PROPERTY BALANCE:')) {
+        finishRow();
+        final match = number.firstMatch(line);
+        if (match != null) {
+          final balance = _monthlyNumber(match.group(0)!);
+          if (((sourceTotals[true]! - sourceTotals[false]!) * 100).round() !=
+              (balance * 100).round()) {
+            errors.add(
+              'Extracted income and expenses do not match the property balance.',
+            );
+          }
+        }
+        break; // Owner payments are transfers, not additional rental income.
+      }
+      if (isIncome == null || line.isEmpty) continue;
+      final subtotal = _parseCurrency(line);
+      if (subtotal != null) {
+        finishRow();
+        reportedTotals[isIncome] = subtotal;
+        isIncome = null;
+        continue;
+      }
+      final matches = number.allMatches(line).toList();
+      final label = line.replaceAll(number, '').trim();
+      if (label.isNotEmpty) {
+        if (values.isNotEmpty) finishRow();
+        category = category == null ? label : '$category $label';
+      }
+      if (category != null) {
+        values.addAll(matches.map((m) => _monthlyNumber(m.group(0)!)));
+      }
+    }
+    finishRow();
+    for (final income in [true, false]) {
+      final reported = reportedTotals[income];
+      if (reported == null) {
+        errors.add(
+          'Missing ${income ? 'income' : 'expense'} subtotal in monthly report.',
+        );
+      } else if ((reported * 100).round() !=
+          (sourceTotals[income]! * 100).round()) {
+        errors.add(
+          'Extracted ${income ? 'income' : 'expenses'} do not match the report subtotal.',
+        );
+      }
+    }
+  }
+
+  double _monthlyNumber(String value) => double.parse(
+    value
+        .replaceAll(r'$', '')
+        .replaceAll(',', '')
+        .replaceAll('(', '-')
+        .replaceAll(')', ''),
+  );
 
   _ParserLayout _pickLayout(List<String> lines) {
     final hasForgeIncome = lines.contains(_forgeLayout.incomeHeaders.first);
@@ -407,6 +567,7 @@ class PdfExtractionService {
         return 'Gross rent';
       }
       if (normalized.contains('income') ||
+          normalized.contains('compensation') ||
           normalized.contains('reimburse') ||
           normalized.contains('water')) {
         return 'Other rental-related income';

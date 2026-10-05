@@ -35,6 +35,9 @@ class _MockAuthService implements AuthService {
 }
 
 class _FakePdfExtractionService extends PdfExtractionService {
+  _FakePdfExtractionService({this.previewOverride});
+
+  final PdfExtractionResult? previewOverride;
   @override
   Future<PdfExtractionResult> extractPreviewFromPdf(
     List<int> bytes,
@@ -46,6 +49,7 @@ class _FakePdfExtractionService extends PdfExtractionService {
     Map<String, String>? customIncomeMappings,
     Map<String, String>? customExpenseMappings,
   }) async {
+    if (previewOverride != null) return previewOverride!;
     final record =
         TaxRecord.empty(
           userId,
@@ -138,6 +142,97 @@ void main() {
     FilePicker.platform = _FakeFilePicker(pickResult: null);
     DraftSyncService.instance.clearPendingDrafts();
   });
+
+  for (final scenario in ['empty', 'invalid', 'unmapped income']) {
+    testWidgets('import preview blocks $scenario extraction', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      FilePicker.platform = _FakeFilePicker(
+        pickResult: FilePickerResult([
+          PlatformFile(
+            name: 'statement.pdf',
+            size: 3,
+            bytes: Uint8List.fromList([1, 2, 3]),
+          ),
+        ]),
+      );
+      final preview = PdfExtractionResult(
+        record: TaxRecord.empty('test_uid', '2025-2026'),
+        parserName: 'Test',
+        confidence: 0,
+        mappedEntryCount: 0,
+        totalEntryCount: scenario == 'empty' ? 0 : 1,
+        validationErrors: scenario == 'invalid'
+            ? ['Subtotal does not reconcile.']
+            : [],
+        unmappedEntries: scenario == 'unmapped income'
+            ? [
+                const UnmappedExtractionEntry(
+                  sourceCategory: 'Unknown receipt',
+                  amount: 50,
+                  isIncome: true,
+                ),
+              ]
+            : [],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(
+            authService: _MockAuthService(),
+            firestoreService: FirestoreService(db: FakeFirebaseFirestore()),
+            pdfExtractionService: _FakePdfExtractionService(
+              previewOverride: preview,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Upload Property Summary PDF'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        tester
+            .widget<ElevatedButton>(
+              find.widgetWithText(ElevatedButton, 'Continue to Worksheet'),
+            )
+            .onPressed,
+        isNull,
+      );
+      if (scenario == 'empty') {
+        expect(
+          find.text('All extracted lines were mapped automatically.'),
+          findsNothing,
+        );
+        expect(
+          find.textContaining('No transactions were extracted.'),
+          findsOneWidget,
+        );
+      }
+      if (scenario == 'invalid') {
+        expect(find.text('Subtotal does not reconcile.'), findsOneWidget);
+      }
+      if (scenario == 'unmapped income') {
+        await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        await tester.tap(find.text('Other rental-related income').last);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(
+          tester
+              .widget<ElevatedButton>(
+                find.widgetWithText(ElevatedButton, 'Continue to Worksheet'),
+              )
+              .onPressed,
+          isNotNull,
+        );
+      }
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+    });
+  }
 
   Widget buildApp(FirestoreService firestoreService) {
     return MaterialApp(
