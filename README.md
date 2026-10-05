@@ -7,10 +7,12 @@ A Flutter application that helps Australian investment property owners automatic
 ## ✨ Features
 
 - **🔐 Authentication** — Secure sign-up, login, and logout powered by Firebase Auth.
-- **📄 PDF Upload & Extraction** — Upload your end-of-year Income & Expenditure Summary PDF and automatically extract categorized income and expenses.
-- **📝 ATO Worksheet Mapping** — Extracted data is mapped to official ATO Rental Property Worksheet categories (Gross rent, Insurance, Repairs, Agent fees, etc.).
+- **📄 PDF Upload & Extraction** — Supports Forge monthly EOFY summaries and the older Debit/Credit/Total format. Monthly rows are checked against annual totals and report subtotals without adding GST twice.
+- **📝 ATO Worksheet Mapping** — Maps recognized entries to rental worksheet categories. Unknown income and expenses require an explicit category choice; custom rules accept only supported destinations.
+- **🔎 Import Review** — Shows extracted totals, blocks empty or unreconciled imports, and lets you correct a detected financial-year mismatch directly in the preview. Reviewed categories are retained in source line-item details.
 - **✏️ Manual Editing** — Review and adjust any extracted values before saving.
 - **💾 Cloud Storage** — Save records to Firebase Firestore, with per-user data isolation via security rules.
+- **📅 Save Safeguards** — Reimports show category-level changes before updating an existing property/year. Save As New Year rejects the source year and existing target records.
 - **📊 Year-over-Year Comparison** — Visualize income, expenses, and net position trends across multiple financial years with interactive bar charts.
 
 ---
@@ -123,12 +125,46 @@ lib/
 
 ## 📋 Supported PDF Formats
 
-Currently supports the **Forge Real Estate** Income & Expenditure Summary layout. The parser extracts:
+The property parser supports:
 
-- **Income**: Residential Rent, Water Rates, and other property income
-- **Expenses**: Administration Fee, Management Fee, Letting Fee, Insurance, Repairs & Maintenance (mapped to ATO categories)
+- **Forge monthly EOFY summaries**, including the FY 2025-2026 layout with July through June columns and an annual Total column. The parser reads each annual amount once, checks monthly sums and section subtotals, and excludes owner payments from rental income. Expenses marked GST Inclusive already include GST.
+- **Older Forge summaries** with Debit/Credit/Total amounts and separate GST rows.
+- **Generic property statements** with recognized Income/Expenses headers and the supported three-value currency structure. Other layouts may require parser changes.
 
-> To support additional property management PDF formats, extend the `_parseExtractedText()` method in `pdf_extraction_service.dart`.
+Recognized categories include Residential Rent, Compensation, Water Rates, Administration Fee, Management Fee, Letting Fee, Insurance, and Repairs & Maintenance. Unrecognized entries, such as Locks, Keys, Card Keys, remain visible for category review unless a valid custom mapping applies.
+
+To add a layout, extend `PdfExtractionService` in `lib/services/pdf_extraction_service.dart` and add synthetic regression fixtures. See [PDF parsing guidance](docs/harness/pdf-parsing.md).
+
+### Property import and save workflow
+
+1. Select the property, upload its PDF, and choose the financial year.
+2. Review extracted totals and validation messages. If the report identifies a different year, select **Use FY …** in the preview. This clears the year mismatch while preserving other validation errors.
+3. Choose a destination for every unmapped income or expense entry. **Continue to Worksheet** stays disabled for empty extraction, validation errors, or missing category choices.
+4. If a record already exists for that property/year, review the overwrite preview. It shows category reallocations even when overall totals are unchanged.
+5. Adjust worksheet amounts and notes, then save. **Save As New Year** creates a separate copy only when the selected year differs from the source and no target record exists.
+
+Custom Mapping Rules use one `keyword=ATO Category` rule per line, with separate income and expense lists. Invalid rules stay open for correction. Invalid destinations in previously stored rules produce reviewable entries instead of unsupported worksheet categories.
+
+Ordinary failed saves can be queued for sync during the current session. Failed new-year copies stay in the worksheet for retry; they are not queued as ordinary updates that could overwrite another record.
+
+### Verification
+
+```bash
+flutter analyze --fatal-infos --fatal-warnings
+flutter test
+```
+
+Regression coverage includes both Forge layouts, reconciliation failures, invalid mappings, reviewed source metadata, year correction, category-level overwrite previews, and new-year copy safeguards.
+
+The optional local PDF integration test reads a private FY 2025-2026 Forge report through the production extractor. It is skipped unless `FORGE_MONTHLY_SAMPLE_PDF_PATH` is set. In PowerShell:
+
+```powershell
+$env:FORGE_MONTHLY_SAMPLE_PDF_PATH = 'C:\private\forge-monthly-report.pdf'
+flutter test test/integration/forge_monthly_pdf_integration_test.dart
+Remove-Item Env:FORGE_MONTHLY_SAMPLE_PDF_PATH
+```
+
+This test asserts the verified reference report's totals; it is not a generic check for any Forge PDF. Keep personal PDFs outside version control and use synthetic text fixtures for routine tests.
 
 ---
 
