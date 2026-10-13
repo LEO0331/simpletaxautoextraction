@@ -195,6 +195,59 @@ service cloud.firestore {
         && (data.updatedAt is timestamp);
     }
 
+    function fundMoney(value) {
+      return value is string && value.matches('^[0-9]{1,30}(\\.[0-9]{1,2})?$');
+    }
+    function validFundAdjustment(a) {
+      return a is map && a.keys().hasOnly(['parcelId', 'amount', 'date', 'evidenceReference', 'beforeSaleId', 'units'])
+        && validString(a.parcelId, 128) && validString(a.evidenceReference, 1000)
+        && a.amount is string && a.amount.matches('^-?[0-9]{1,30}(\\.[0-9]{1,2})?$')
+        && a.date is string && a.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && validOptionalString(a.get('beforeSaleId', null), 128)
+        && (a.get('units', null) == null || (a.units is string && a.units.matches('^[0-9]{1,30}(\\.[0-9]{1,12})?$')));
+    }
+    function validFundDrp(a) {
+      return a is map && a.keys().hasOnly(['buyTransactionId', 'cashEntitlement', 'reinvestedAmount', 'residualCash', 'evidenceReference'])
+        && validString(a.buyTransactionId, 128) && validString(a.evidenceReference, 1000)
+        && fundMoney(a.cashEntitlement) && fundMoney(a.reinvestedAmount) && fundMoney(a.residualCash);
+    }
+    function validFundStatement(d, userId) {
+      let components = d.components;
+      // One anchored regex validates exactly eleven monetary strings. Embedded
+      // delimiters, non-string values and malformed cents fail this expression.
+      let amounts = components.get('australianIncome', '0') + '|' + components.get('foreignIncome', '0') + '|' + components.get('frankingCredits', '0') + '|' + components.get('foreignTaxOffset', '0') + '|' + components.get('withholding', '0') + '|' + components.get('cashDistributions', '0') + '|' + components.get('discountedCapitalGain', '0') + '|' + components.get('otherCapitalGain', '0') + '|' + components.get('grossCapitalGain', '0') + '|' + components.get('amitShortfall', '0') + '|' + components.get('amitExcess', '0');
+      let adjustments = d.adjustments;
+      let drpLinks = d.drpLinks;
+      return d.keys().hasOnly(['schemaVersion', 'userId', 'ticker', 'accountNumber', 'issuer', 'layoutVersion', 'yearStart', 'sourceReference', 'regime', 'revision', 'isReviewed', 'isVoided', 'components', 'adjustments', 'drpLinks', 'createdAt', 'updatedAt'])
+        && d.schemaVersion == 1 && d.userId == userId
+        && validString(d.ticker, 16) && validString(d.accountNumber, 64)
+        && validString(d.issuer, 180) && validString(d.layoutVersion, 64)
+        && validString(d.sourceReference, 1000)
+        && d.yearStart is int && d.yearStart >= 1900 && d.yearStart <= 2199
+        && d.regime in ['AMIT', 'non-AMIT'] && d.revision is int && d.revision > 0
+        && d.isReviewed is bool && d.isVoided is bool
+        && d.createdAt is timestamp && d.updatedAt is timestamp
+        && components is map && components.keys().hasOnly(['australianIncome', 'foreignIncome', 'frankingCredits', 'foreignTaxOffset', 'withholding', 'cashDistributions', 'discountedCapitalGain', 'otherCapitalGain', 'grossCapitalGain', 'amitShortfall', 'amitExcess'])
+        && amounts.matches('^([0-9]{1,30}(\\.[0-9]{1,2})?\\|){10}[0-9]{1,30}(\\.[0-9]{1,2})?$')
+        && adjustments is list && adjustments.size() <= 4
+        && (adjustments.size() < 1 || validFundAdjustment(adjustments[0]))
+        && (adjustments.size() < 2 || validFundAdjustment(adjustments[1]))
+        && (adjustments.size() < 3 || validFundAdjustment(adjustments[2]))
+        && (adjustments.size() < 4 || validFundAdjustment(adjustments[3]))
+        && drpLinks is list && drpLinks.size() <= 4;
+    }
+    function validFundDrpHistory(d) {
+      // Parent and mandatory mirrored revision jointly validate every field.
+      // Splitting DRP validation keeps four adjustments + four links below the
+      // per-operation expression ceiling without removing numeric checks.
+      let links = d.drpLinks;
+      return links is list && links.size() <= 4
+        && (links.size() < 1 || validFundDrp(links[0]))
+        && (links.size() < 2 || validFundDrp(links[1]))
+        && (links.size() < 3 || validFundDrp(links[2]))
+        && (links.size() < 4 || validFundDrp(links[3]));
+    }
+
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId)
@@ -303,15 +356,38 @@ service cloud.firestore {
           allow update, delete: if false;
         }
       }
+      match /managed_fund_statements/{statementId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && resource == null && validFundStatement(request.resource.data, userId)
+          && request.resource.data.revision == 1 && ledgerAdvanced(userId)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/managed_fund_statements/$(statementId)/revisions/1).data == request.resource.data;
+        allow update: if isOwner(userId) && resource != null && validFundStatement(request.resource.data, userId)
+          && request.resource.data.revision == resource.data.revision + 1
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.ticker == resource.data.ticker
+          && request.resource.data.accountNumber == resource.data.accountNumber
+          && request.resource.data.yearStart == resource.data.yearStart
+          && ledgerAdvanced(userId)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/managed_fund_statements/$(statementId)/revisions/$(request.resource.data.revision)).data == request.resource.data;
+        allow delete: if false;
+        match /revisions/{revisionId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && validFundDrpHistory(request.resource.data)
+            && revisionId == string(request.resource.data.revision)
+            && getAfter(/databases/$(database)/documents/users/$(userId)/managed_fund_statements/$(statementId)).data == request.resource.data;
+          allow update, delete: if false;
+        }
+      }
       match /investment_calculation_snapshots/{snapshotId} {
         allow read: if isOwner(userId);
         allow create: if isOwner(userId)
           && request.resource.data.keys().hasOnly(['schemaVersion', 'calculationVersion', 'ruleVersion', 'year', 'status',
             'issues', 'totalCapitalGains', 'currentYearLosses', 'priorLossesUsed', 'lossesCarriedForward',
             'netCapitalGain', 'lossApplications', 'snapshot', 'ledgerGeneration', 'inputRevisions',
-            'allocationRevisions', 'openingLossEvidence', 'inputHash', 'calculatedAt', 'userId', 'createdAt'])
+            'allocationRevisions', 'statementRevisions', 'openingLossEvidence', 'inputHash', 'calculatedAt', 'userId', 'createdAt'])
           && request.resource.data.userId == userId
           && request.resource.data.createdAt is timestamp
+          && request.resource.data.get('statementRevisions', {}) is map
           && request.resource.data.inputRevisions is map
           && (request.resource.data.inputRevisions.size() > 0 ||
             (request.resource.data.schemaVersion == 1 && request.resource.data.snapshot is map

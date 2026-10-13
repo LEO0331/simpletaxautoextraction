@@ -217,6 +217,84 @@ def main():
     commit(upgrade_writes, expected=403)
     commit([*upgrade_writes, write('investment_transactions/legacy/revisions/0', legacy)])
     commit([write('investment_transactions/legacy/revisions/0', upgraded)], expected=403)
+    fund = {'schemaVersion': 1, 'userId': 'owner', 'ticker': 'SYN',
+        'accountNumber': 'synthetic-account', 'issuer': 'Synthetic issuer',
+        'layoutVersion': 'annual-v1', 'yearStart': 2024, 'sourceReference': 'Synthetic statement',
+        'regime': 'AMIT', 'revision': 1, 'isReviewed': True, 'isVoided': False,
+        'components': {'australianIncome': '100', 'grossCapitalGain': '0'},
+        'adjustments': [], 'drpLinks': [], 'createdAt': NOW, 'updatedAt': NOW}
+    def fund_writes(data, generation):
+        return [write('managed_fund_statements/synthetic', data),
+            write(f'managed_fund_statements/synthetic/revisions/{data["revision"]}', data),
+            write('investment_metadata/ledger', {'generation': generation})]
+    commit(fund_writes(fund, 10))
+    request('GET', f'/v1/{BASE}/users/owner/managed_fund_statements/synthetic')
+    request('GET', f'/v1/{BASE}/users/owner/managed_fund_statements/synthetic', uid='other', expected=403)
+    request('GET', f'/v1/{BASE}/users/owner/managed_fund_statements/synthetic', uid=None, expected=403)
+    corrected = copy.deepcopy(fund)
+    corrected.update(revision=2, sourceReference='Synthetic corrected statement')
+    commit(fund_writes(corrected, 11), uid='other', expected=403)
+    commit(fund_writes(corrected, 11), uid=None, expected=403)
+    invalid = copy.deepcopy(corrected)
+    invalid['privatePdfBytes'] = 'not permitted'
+    commit(fund_writes(invalid, 11), expected=403)
+    invalid = copy.deepcopy(corrected)
+    invalid['components']['unexpected'] = '1'
+    commit(fund_writes(invalid, 11), expected=403)
+    invalid = copy.deepcopy(corrected)
+    invalid['components']['australianIncome'] = 'NaN'
+    commit(fund_writes(invalid, 11), expected=403)
+    invalid = copy.deepcopy(corrected)
+    invalid['adjustments'] = [{'parcelId': 'buy', 'amount': '-5', 'date': '2025-06-30',
+        'evidenceReference': 'Synthetic allocation', 'units': '1', 'beforeSaleId': None,
+        'unknown': 'rejected'}]
+    commit(fund_writes(invalid, 11), expected=403)
+    commit([write('managed_fund_statements/synthetic', corrected),
+        write('investment_metadata/ledger', {'generation': 11})], expected=403)
+    commit(fund_writes(corrected, 11))
+    commit(fund_writes(corrected, 12), expected=403)
+    commit([write('managed_fund_statements/synthetic/revisions/1', corrected)], expected=403)
+    commit([{'delete': BASE + '/users/owner/managed_fund_statements/synthetic'}], expected=403)
+    corrected.update(revision=3, isVoided=True)
+    commit(fund_writes(corrected, 12))
+    boundary_fund = copy.deepcopy(corrected)
+    boundary_fund.update(revision=4, isVoided=False)
+    boundary_fund['components'] = {key: '0' for key in ['australianIncome', 'foreignIncome',
+        'frankingCredits', 'foreignTaxOffset', 'withholding', 'cashDistributions',
+        'discountedCapitalGain', 'otherCapitalGain', 'grossCapitalGain', 'amitShortfall', 'amitExcess']}
+    boundary_fund['adjustments'] = [{'parcelId': f'boundary-{i}', 'amount': '1',
+        'date': '2025-06-30', 'evidenceReference': 'Synthetic allocation',
+        'beforeSaleId': None, 'units': '1'} for i in range(4)]
+    boundary_fund['drpLinks'] = [{'buyTransactionId': f'boundary-{i}',
+        'cashEntitlement': '1', 'reinvestedAmount': '1', 'residualCash': '0',
+        'evidenceReference': 'Synthetic DRP'} for i in range(4)]
+    commit(fund_writes(boundary_fund, 13))
+    too_many = copy.deepcopy(boundary_fund)
+    too_many['revision'] = 5
+    too_many['adjustments'].append(copy.deepcopy(too_many['adjustments'][0]))
+    commit(fund_writes(too_many, 14), expected=403)
+    too_many = copy.deepcopy(boundary_fund)
+    too_many['revision'] = 5
+    too_many['drpLinks'].append(copy.deepcopy(too_many['drpLinks'][0]))
+    commit(fund_writes(too_many, 14), expected=403)
+    malformed_drp = copy.deepcopy(boundary_fund)
+    malformed_drp['revision'] = 5
+    malformed_drp['drpLinks'][0]['cashEntitlement'] = 'NaN'
+    commit(fund_writes(malformed_drp, 14), expected=403)
+    malformed_drp['drpLinks'][0]['cashEntitlement'] = 1
+    commit(fund_writes(malformed_drp, 14), expected=403)
+    malformed_amount = copy.deepcopy(boundary_fund)
+    malformed_amount['revision'] = 5
+    malformed_amount['components']['australianIncome'] = 1
+    commit(fund_writes(malformed_amount, 14), expected=403)
+    malformed_amount['components']['australianIncome'] = '1|1'
+    commit(fund_writes(malformed_amount, 14), expected=403)
+    created_boundary = copy.deepcopy(boundary_fund)
+    created_boundary['revision'] = 1
+    commit([write('managed_fund_statements/boundary-create', created_boundary),
+        write('managed_fund_statements/boundary-create/revisions/1', created_boundary),
+        write('investment_metadata/ledger', {'generation': 14})])
+    print('PASS: managed fund ownership, typed schema, correction history, generation and immutable voids')
     print('PASS: real Firestore emulator ownership, schema, locks, revisions, generation, immutable snapshots and 4-parcel allocation boundary')
 
 
