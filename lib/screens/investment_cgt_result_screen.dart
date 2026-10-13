@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/investment_cgt_calculation.dart';
 import '../models/investment_transaction.dart';
+import '../models/investment_ledger.dart';
 import '../services/investment_cgt_calculator.dart';
 import '../services/export_service.dart';
 import '../utils/file_exporter.dart';
@@ -11,11 +12,13 @@ class InvestmentCgtResultArgs {
   final DateTime cutOffDate;
   final Map<String, double> tickerPrices;
   final List<InvestmentTransaction> transactions;
+  final List<SaleAllocation> allocations;
 
   const InvestmentCgtResultArgs({
     required this.cutOffDate,
     required this.tickerPrices,
     required this.transactions,
+    this.allocations = const [],
   });
 }
 
@@ -32,16 +35,22 @@ class InvestmentCgtResultScreen extends StatelessWidget {
       cutOffDate: args.cutOffDate,
       tickerPrices: args.tickerPrices,
       transactions: args.transactions,
+      allocations: args.allocations,
     );
     final calculations = session.calculations;
     final summary = session.summary;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Investment CGT Results')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            const Text(
+              'Unrealised portfolio estimate — no taxable disposal is created.',
+            ),
+            for (final issue in session.issues)
+              Text(issue, style: const TextStyle(color: Colors.red)),
             Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -64,7 +73,7 @@ class InvestmentCgtResultScreen extends StatelessWidget {
                   summary.totalNotEligibleGains,
                 ),
                 _summaryCard(
-                  'Estimated taxable gain after discount',
+                  'Hypothetical discounted gain (before losses)',
                   summary.totalEstimatedTaxableGainAfterDiscount,
                 ),
                 _summaryCard(
@@ -112,19 +121,12 @@ class InvestmentCgtResultScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            Expanded(
-              child: calculations.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No eligible BUY transactions found for this cut-off setup.',
-                      ),
-                    )
-                  : ListView.separated(
-                      itemCount: calculations.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 8),
-                      itemBuilder: (_, i) => _calculationCard(calculations[i]),
-                    ),
-            ),
+            if (calculations.isEmpty)
+              const Text(
+                'No eligible BUY transactions found for this cut-off setup.',
+              ),
+            for (final calculation in calculations)
+              _calculationCard(calculation),
           ],
         ),
       ),
@@ -192,7 +194,7 @@ class InvestmentCgtResultScreen extends StatelessWidget {
               style: TextStyle(color: daysColor, fontWeight: FontWeight.w700),
             ),
             Text(
-              'Estimated taxable gain after discount: ${c.estimatedTaxableGainAfterDiscount.toStringAsFixed(2)}',
+              'Hypothetical discounted gain before annual losses: ${c.estimatedTaxableGainAfterDiscount.toStringAsFixed(2)}',
             ),
           ],
         ),

@@ -86,7 +86,23 @@ class _InvestmentTransactionListScreenState
       ),
     );
     if (updated == null) return;
-    await _firestoreService.saveInvestmentTransaction(updated);
+    try {
+      await _firestoreService.saveInvestmentTransaction(updated);
+    } catch (_) {
+      _showSaveError();
+    }
+  }
+
+  void _showSaveError() {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Save failed. Reload changed records or unlock before editing.',
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -141,7 +157,10 @@ class _InvestmentTransactionListScreenState
           ),
           Expanded(
             child: StreamBuilder<List<InvestmentTransaction>>(
-              stream: _firestoreService.getInvestmentTransactions(user.uid),
+              stream: _firestoreService.getInvestmentTransactions(
+                user.uid,
+                includeVoided: true,
+              ),
               builder: (_, snapshot) {
                 if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
@@ -157,7 +176,9 @@ class _InvestmentTransactionListScreenState
                     final t = records[i];
                     return Card(
                       child: ListTile(
-                        title: Text('${t.ticker} • ${t.transactionType.value}'),
+                        title: Text(
+                          '${t.ticker} • ${t.transactionType.value}${t.isVoided ? ' · Voided' : ''}',
+                        ),
                         subtitle: Text(
                           '${t.securityName}\n'
                           'Trade: ${t.tradeDate.toIso8601String().split('T').first} | Units: ${t.units}\n'
@@ -167,25 +188,29 @@ class _InvestmentTransactionListScreenState
                         isThreeLine: true,
                         trailing: PopupMenuButton<String>(
                           onSelected: (v) async {
-                            switch (v) {
-                              case 'edit':
-                                await _edit(t);
-                                break;
-                              case 'delete':
-                                await _firestoreService
-                                    .deleteInvestmentTransaction(
-                                      user.uid,
-                                      t.id!,
-                                    );
-                                break;
-                              case 'lock':
-                                await _firestoreService
-                                    .saveInvestmentTransaction(
-                                      t.copyWith(isLocked: !t.isLocked),
-                                    );
-                                break;
-                              default:
-                                break;
+                            try {
+                              switch (v) {
+                                case 'edit':
+                                  await _edit(t);
+                                  break;
+                                case 'delete':
+                                  await _firestoreService
+                                      .deleteInvestmentTransaction(
+                                        user.uid,
+                                        t.id!,
+                                      );
+                                  break;
+                                case 'lock':
+                                  await _firestoreService
+                                      .saveInvestmentTransaction(
+                                        t.copyWith(isLocked: !t.isLocked),
+                                      );
+                                  break;
+                                default:
+                                  break;
+                              }
+                            } catch (_) {
+                              _showSaveError();
                             }
                           },
                           itemBuilder: (_) => [
@@ -195,7 +220,7 @@ class _InvestmentTransactionListScreenState
                             ),
                             const PopupMenuItem(
                               value: 'delete',
-                              child: Text('Delete'),
+                              child: Text('Void (retain audit history)'),
                             ),
                             PopupMenuItem(
                               value: 'lock',

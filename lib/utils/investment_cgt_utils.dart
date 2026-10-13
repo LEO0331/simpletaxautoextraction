@@ -38,21 +38,29 @@ DateTime? _buildDateFromParts(String a, String b, String c) {
 
   // DD/MM/YYYY
   if (a.length <= 2 && c.length == 4) {
-    return DateTime(p3, p2, p1);
+    return _validCalendarDate(p3, p2, p1);
   }
   // YYYY/MM/DD
   if (a.length == 4 && c.length <= 2) {
-    return DateTime(p1, p2, p3);
+    return _validCalendarDate(p1, p2, p3);
   }
-  // fallback
-  if (p1 > 31) {
-    return DateTime(p1, p2, p3);
+  return null;
+}
+
+DateTime? _validCalendarDate(int year, int month, int day) {
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
   }
-  return DateTime(p3, p2, p1);
+  final result = DateTime(year, month, day);
+  return result.year == year && result.month == month && result.day == day
+      ? result
+      : null;
 }
 
 int calculateHoldingDays(DateTime tradeDate, DateTime cutOffDate) {
-  return cutOffDate.difference(tradeDate).inDays;
+  return DateTime.utc(cutOffDate.year, cutOffDate.month, cutOffDate.day)
+      .difference(DateTime.utc(tradeDate.year, tradeDate.month, tradeDate.day))
+      .inDays;
 }
 
 double calculateMarketValue(double units, double cutOffPrice) {

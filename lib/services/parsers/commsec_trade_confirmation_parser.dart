@@ -1,4 +1,5 @@
 import '../../models/investment_transaction.dart';
+import '../../models/tax_decimal.dart';
 import '../../utils/investment_cgt_utils.dart';
 
 class InvestmentTransactionDraft {
@@ -20,6 +21,11 @@ class InvestmentTransactionDraft {
   final String parserVersion;
   final String notes;
   final bool needsReview;
+  final bool directionNeedsReview;
+  final String? unitsExact;
+  final String? considerationExact;
+  final String? brokerageExact;
+  final String? totalCostExact;
 
   const InvestmentTransactionDraft({
     required this.ticker,
@@ -40,6 +46,11 @@ class InvestmentTransactionDraft {
     required this.parserVersion,
     required this.notes,
     required this.needsReview,
+    this.directionNeedsReview = false,
+    this.unitsExact,
+    this.considerationExact,
+    this.brokerageExact,
+    this.totalCostExact,
   });
 
   InvestmentTransaction toTransaction(String userId) {
@@ -64,6 +75,10 @@ class InvestmentTransactionDraft {
       brokerage: brokerage ?? 0,
       gst: gst,
       totalCost: totalCost!,
+      unitsExact: unitsExact,
+      considerationExact: considerationExact,
+      brokerageExact: brokerageExact,
+      totalCostExact: totalCostExact,
       confirmationNumber: confirmationNumber,
       accountNumber: accountNumber,
       sourceFileName: sourceFileName,
@@ -79,11 +94,50 @@ class InvestmentTransactionDraft {
     if (ticker.trim().isEmpty) errors.add('ticker');
     if (securityName.trim().isEmpty) errors.add('securityName');
     if (tradeDate == null) errors.add('tradeDate');
-    if (units == null || units! <= 0) errors.add('units');
-    if (averagePrice == null || averagePrice! <= 0) {
+    if (directionNeedsReview) errors.add('transactionType');
+    if (units == null || !units!.isFinite || units! <= 0) errors.add('units');
+    if (averagePrice == null || !averagePrice!.isFinite || averagePrice! <= 0) {
       errors.add('averagePrice');
     }
-    if (totalCost == null || totalCost! <= 0) errors.add('totalCost');
+    if (consideration == null ||
+        !consideration!.isFinite ||
+        consideration! <= 0) {
+      errors.add('consideration');
+    }
+    if (brokerage == null || !brokerage!.isFinite || brokerage! < 0) {
+      errors.add('brokerage');
+    }
+    if (totalCost == null || !totalCost!.isFinite || totalCost! <= 0) {
+      errors.add('totalCost');
+    }
+    if (gst != null &&
+        (!gst!.isFinite ||
+            gst! < 0 ||
+            (brokerage != null && gst! > brokerage!))) {
+      errors.add('gst');
+    }
+    if (consideration != null &&
+        brokerage != null &&
+        totalCost != null &&
+        consideration!.isFinite &&
+        brokerage!.isFinite &&
+        totalCost!.isFinite) {
+      try {
+        final gross = TaxDecimal.parse(
+          considerationExact ?? consideration.toString(),
+        );
+        final fees = TaxDecimal.parse(brokerageExact ?? brokerage.toString());
+        final total = TaxDecimal.parse(totalCostExact ?? totalCost.toString());
+        if (total !=
+            (transactionType == InvestmentTransactionType.sell
+                ? gross - fees
+                : gross + fees)) {
+          errors.add('total reconciliation');
+        }
+      } on FormatException {
+        errors.add('exact decimal facts');
+      }
+    }
     return errors;
   }
 }
@@ -106,7 +160,7 @@ class InvestmentExtractionResult {
 
 class CommsecTradeConfirmationParser {
   static const String parserName = 'CommSec Trade Confirmation Parser';
-  static const String parserVersion = 'v2';
+  static const String parserVersion = 'v3';
 
   InvestmentExtractionResult parse(String rawText, {String? sourceFileName}) {
     final text = rawText.replaceAll('\r', '\n');
@@ -121,7 +175,14 @@ class CommsecTradeConfirmationParser {
     final table = _extractCommsecTable(lines);
     final ticker = _extractTicker(text, lines);
     final securityName = _extractSecurityName(text, lines);
-    final type = _extractTransactionType(text);
+    final detectedType = _extractTransactionType(text);
+    final type = detectedType ?? InvestmentTransactionType.buy;
+    if (detectedType == null) {
+      missing.add('transactionType');
+      warnings.add(
+        'Trade direction missing or ambiguous; explicitly select BUY or SELL during review.',
+      );
+    }
     final tradeDate =
         table.tradeDate ?? _extractDate(text, ['TRADE DATE', 'DATE']);
     final settlementDate =
@@ -137,7 +198,12 @@ class CommsecTradeConfirmationParser {
         _extractMoneyLike(text, ['BROKERAGE & COSTS INCL GST']);
     final gst = table.gst ?? _extractMoneyLike(text, ['TOTAL GST']);
     double? totalCost =
-        table.totalCost ?? _extractMoneyLike(text, ['TOTAL COST']);
+        table.totalCost ??
+        _extractMoneyLike(text, [
+          'TOTAL COST',
+          'NET PROCEEDS',
+          'TOTAL PROCEEDS',
+        ]);
     final confirmationNumber =
         table.confirmationNumber ??
         _extractAfterLabel(text, ['CONFIRMATION NO', 'CONFIRMATION NUMBER']);
@@ -146,8 +212,26 @@ class CommsecTradeConfirmationParser {
         _extractAfterLabel(text, ['ACCOUNT NO', 'ACCOUNT']);
 
     if (totalCost == null && consideration != null && brokerage != null) {
-      totalCost = consideration + brokerage;
-      warnings.add('TOTAL COST missing; used consideration + brokerage.');
+      final gross = TaxDecimal.parse(consideration.toString());
+      final fees = TaxDecimal.parse(brokerage.toString());
+      totalCost = double.parse(
+        (type == InvestmentTransactionType.sell ? gross - fees : gross + fees)
+            .toString(),
+      );
+      warnings.add(
+        'Total missing; derived from gross consideration and brokerage (GST included).',
+      );
+    }
+
+    if (totalCost != null && consideration != null && brokerage != null) {
+      final expected = type == InvestmentTransactionType.sell
+          ? consideration - brokerage
+          : consideration + brokerage;
+      if ((totalCost - expected).abs() > 0.005) {
+        warnings.add(
+          'Total does not reconcile to consideration and brokerage; verify during review.',
+        );
+      }
     }
 
     if (ticker.isEmpty) missing.add('ticker');
@@ -155,6 +239,10 @@ class CommsecTradeConfirmationParser {
     if (tradeDate == null) missing.add('tradeDate');
     if (units == null || units <= 0) missing.add('units');
     if (averagePrice == null || averagePrice <= 0) missing.add('averagePrice');
+    if (consideration == null || consideration <= 0) {
+      missing.add('consideration');
+    }
+    if (brokerage == null || brokerage < 0) missing.add('brokerage');
     if (totalCost == null || totalCost <= 0) missing.add('totalCost');
 
     final score = _confidence(missing.length, warnings.length);
@@ -180,6 +268,23 @@ class CommsecTradeConfirmationParser {
         parserVersion: parserVersion,
         notes: '',
         needsReview: needsReview,
+        directionNeedsReview: detectedType == null,
+        unitsExact:
+            _extractDecimalText(text, ['TOTAL UNITS', 'UNITS']) ??
+            units?.toString(),
+        considerationExact:
+            _extractDecimalText(text, ['CONSIDERATION']) ??
+            consideration?.toString(),
+        brokerageExact:
+            _extractDecimalText(text, ['BROKERAGE & COSTS INCL GST']) ??
+            brokerage?.toString(),
+        totalCostExact:
+            _extractDecimalText(text, [
+              'TOTAL COST',
+              'NET PROCEEDS',
+              'TOTAL PROCEEDS',
+            ]) ??
+            totalCost?.toString(),
       ),
       confidence: score,
       missingFields: missing,
@@ -254,11 +359,32 @@ class CommsecTradeConfirmationParser {
     return '';
   }
 
-  InvestmentTransactionType _extractTransactionType(String text) {
-    if (RegExp(r'\bSELL\b', caseSensitive: false).hasMatch(text)) {
-      return InvestmentTransactionType.sell;
+  InvestmentTransactionType? _extractTransactionType(String text) {
+    final buy = RegExp(
+      r'\b(?:BUY|BOUGHT)\b',
+      caseSensitive: false,
+    ).hasMatch(text);
+    final sell = RegExp(
+      r'\b(?:SELL|SOLD)\b',
+      caseSensitive: false,
+    ).hasMatch(text);
+    if (buy == sell) return null;
+    return sell
+        ? InvestmentTransactionType.sell
+        : InvestmentTransactionType.buy;
+  }
+
+  String? _extractDecimalText(String text, List<String> labels) {
+    for (final label in labels) {
+      final match = RegExp(
+        '${RegExp.escape(label)}[^\\d\\-\\n]*(\\\$?[ \\t]*[\\d,]+(?:\\.\\d+)?)',
+        caseSensitive: false,
+      ).firstMatch(text);
+      if (match != null) {
+        return match.group(1)!.replaceAll(r'$', '').replaceAll(',', '').trim();
+      }
     }
-    return InvestmentTransactionType.buy;
+    return null;
   }
 
   DateTime? _extractDate(String text, List<String> labels) {

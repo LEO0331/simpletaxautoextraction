@@ -4,4 +4,5 @@ class InvestmentCgtRoutes {
   static const transactions = '/investment-cgt/transactions';
   static const calculate = '/investment-cgt/calculate';
   static const results = '/investment-cgt/results';
+  static const ledger = '/investment-cgt/ledger';
 }

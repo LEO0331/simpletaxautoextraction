@@ -3,6 +3,55 @@ import 'package:simpletaxautoextraction/models/investment_transaction.dart';
 import 'package:simpletaxautoextraction/services/parsers/commsec_trade_confirmation_parser.dart';
 
 void main() {
+  const sale = '''
+WE HAVE SOLD THE FOLLOWING SECURITIES FOR YOU
+EXAMPLE INDEX ETF
+SECURITY CODE EXM
+TRADE DATE 30/03/2026
+TOTAL UNITS 10.125000
+AVERAGE PRICE 100
+CONSIDERATION (AUD) 1012.50
+BROKERAGE & COSTS INCL GST 2.50
+NET PROCEEDS 1010.00
+''';
+  test(
+    'SOLD confirms a sale with net proceeds and exact original quantities',
+    () {
+      final result = CommsecTradeConfirmationParser().parse(sale);
+      expect(result.draft.transactionType, InvestmentTransactionType.sell);
+      expect(result.draft.totalCost, 1010);
+      expect(result.draft.unitsExact, '10.125000');
+      expect(result.draft.directionNeedsReview, isFalse);
+      expect(result.draft.toTransaction('u').isReviewed, isFalse);
+    },
+  );
+  test(
+    'sale missing net amount subtracts fees without double counting GST',
+    () {
+      final result = CommsecTradeConfirmationParser().parse(
+        sale.replaceAll('NET PROCEEDS 1010.00', ''),
+      );
+      expect(result.draft.totalCost, 1010);
+      expect(result.draft.needsReview, isTrue);
+    },
+  );
+  test(
+    'missing and contradictory directions cannot become an authorised buy',
+    () {
+      for (final text in [sale.replaceAll('SOLD', 'TRADED'), '$sale\nBUY']) {
+        final result = CommsecTradeConfirmationParser().parse(text);
+        expect(result.draft.directionNeedsReview, isTrue);
+        expect(result.missingFields, contains('transactionType'));
+        expect(() => result.draft.toTransaction('u'), throwsStateError);
+      }
+    },
+  );
+  test('inconsistent sale total requires review', () {
+    final result = CommsecTradeConfirmationParser().parse(
+      sale.replaceAll('1010.00', '1015.00'),
+    );
+    expect(result.warnings, contains(contains('does not reconcile')));
+  });
   test('commsec parser extracts key fields', () {
     const sample = '''
 SECURITY

@@ -7,6 +7,7 @@ import '../services/firestore_service.dart';
 import '../services/investment_draft_sync_service.dart';
 import '../services/parsers/commsec_trade_confirmation_parser.dart';
 import '../services/pdf_extraction_service.dart';
+import '../utils/source_fingerprint.dart';
 import 'investment_transaction_review_screen.dart';
 
 class InvestmentTransactionUploadScreen extends StatefulWidget {
@@ -85,11 +86,17 @@ class _InvestmentTransactionUploadScreenState
               fileName: f.name,
               status: extraction.draft.needsReview ? 'Needs review' : 'Parsed',
               extraction: extraction,
+              sourceHash: SourceFingerprint.sha256(bytes),
             ),
           );
         } catch (e) {
           _parsed.add(
-            _ParsedDraftItem(fileName: f.name, status: 'Error', error: '$e'),
+            _ParsedDraftItem(
+              fileName: f.name,
+              status: 'Error',
+              error:
+                  'Unsupported or unreadable document. Please review manually.',
+            ),
           );
         }
       }
@@ -127,7 +134,7 @@ class _InvestmentTransactionUploadScreenState
     );
     if (!mounted) return;
 
-    InvestmentTransaction toSave = tx;
+    InvestmentTransaction toSave = tx.copyWith(sourceHash: item.sourceHash);
     if (duplicate != null) {
       final action = await showDialog<String>(
         context: context,
@@ -141,10 +148,6 @@ class _InvestmentTransactionUploadScreenState
               onPressed: () => Navigator.pop(context, 'cancel'),
               child: const Text('Cancel'),
             ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'duplicate'),
-              child: const Text('Save duplicate'),
-            ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, 'replace'),
               child: const Text('Replace existing'),
@@ -157,16 +160,78 @@ class _InvestmentTransactionUploadScreenState
         return;
       }
       if (action == 'replace') {
-        toSave = tx.copyWith(id: duplicate.id);
+        toSave = toSave.copyWith(
+          id: duplicate.id,
+          revision: duplicate.revision,
+        );
       }
     }
 
     try {
       await _firestoreService.saveInvestmentTransaction(toSave);
       _showSnackBar('Investment transaction saved.');
-    } catch (e) {
+    } on StateError {
+      _showSnackBar(
+        'Record changed or is locked. Reload and review before saving.',
+      );
+    } catch (_) {
       InvestmentDraftSyncService.instance.queueDraft(toSave);
-      _showSnackBar('Save failed, draft queued: $e');
+      _showSnackBar(
+        'Save failed. Reviewed draft queued for retry in this session.',
+      );
+    }
+  }
+
+  Future<void> _manualEntry() => _reviewAndSave(
+    _ParsedDraftItem(
+      fileName: 'Manual entry',
+      status: 'Needs review',
+      extraction: InvestmentExtractionResult(
+        draft: const InvestmentTransactionDraft(
+          ticker: '',
+          securityName: '',
+          transactionType: InvestmentTransactionType.buy,
+          tradeDate: null,
+          settlementDate: null,
+          units: null,
+          averagePrice: null,
+          consideration: null,
+          brokerage: null,
+          gst: null,
+          totalCost: null,
+          confirmationNumber: null,
+          accountNumber: null,
+          sourceFileName: null,
+          sourceParser: 'Manual entry',
+          parserVersion: 'v1',
+          notes: '',
+          needsReview: true,
+          directionNeedsReview: true,
+        ),
+        confidence: 0,
+        missingFields: const [],
+        warnings: const [
+          'Enter an account identifier and evidence reference in the confirmation field.',
+        ],
+        rawText: '',
+      ),
+    ),
+  );
+
+  Future<void> _retryDrafts() async {
+    final uid = _authService.currentUser?.uid;
+    if (uid == null) return;
+    setState(() => _isProcessing = true);
+    try {
+      final count = await InvestmentDraftSyncService.instance.syncAll(
+        _firestoreService,
+        userId: uid,
+      );
+      _showSnackBar(
+        '$count reviewed drafts saved. Remaining drafts may require review.',
+      );
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -198,6 +263,17 @@ class _InvestmentTransactionUploadScreenState
               label: Text(_isProcessing ? 'Parsing...' : 'Upload PDFs'),
             ),
             const SizedBox(height: 12),
+            TextButton(
+              onPressed: _isProcessing ? null : _manualEntry,
+              child: const Text('Enter transaction manually'),
+            ),
+            if (InvestmentDraftSyncService.instance.pendingDrafts.any(
+              (draft) => draft.userId == _authService.currentUser?.uid,
+            ))
+              TextButton(
+                onPressed: _isProcessing ? null : _retryDrafts,
+                child: const Text('Retry this account’s queued drafts'),
+              ),
             Expanded(
               child: _parsed.isEmpty
                   ? const Center(
@@ -240,11 +316,13 @@ class _ParsedDraftItem {
   final String status;
   final InvestmentExtractionResult? extraction;
   final String? error;
+  final String? sourceHash;
 
   _ParsedDraftItem({
     required this.fileName,
     required this.status,
     this.extraction,
     this.error,
+    this.sourceHash,
   });
 }

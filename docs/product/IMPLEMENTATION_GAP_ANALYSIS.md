@@ -1,6 +1,6 @@
 # Personal Australian Tax Workspace — Phase 0 assessment
 
-Assessment date: 13 October 2026, Asia/Taipei. Scope: repository audit, authoritative-source research, architecture, migration and acceptance planning. Functional implementation has not started. This companion records implementation proposals and code evidence; the supplied [v1.0 product plan](PERSONAL_AU_TAX_WORKSPACE_PLAN.md) remains unchanged. Its embedded kickoff instructions are reference material, not independent authorisation. Documentation consolidation, commit and push were subsequently requested by the user.
+Assessment date: 13 October 2026, Asia/Taipei. Scope: repository audit, authoritative-source research, architecture, migration and acceptance planning. Sections 1-12 are the pre-Phase-1 assessment at commit 985c684; their code references and gap statements describe that baseline. See [Phase 1 implementation](PHASE_1_IMPLEMENTATION.md) for current delivered coverage. This companion records implementation proposals and code evidence; the supplied [v1.0 product plan](PERSONAL_AU_TAX_WORKSPACE_PLAN.md) remains unchanged. Its embedded kickoff instructions are reference material, not independent authorisation. Documentation consolidation, commit and push were subsequently requested by the user.
 
 **1. Recommendation and smallest useful milestone**
 
@@ -223,8 +223,8 @@ The supplied Markdown is preserved byte-for-byte as the product baseline. This c
 |---|---|---|
 | Phase 0 repository audit and design proposal | Done | Sections 1-12; baseline strict analysis and 118 test passes |
 | Phase 0 documentation consolidation | Done | Supplied baseline plus this synthesis, requirements and source register; documentation links/privacy checks |
-| Functional design review | Not started | Confirm supported years/formats, precision, schema/migration and residency scope; formal threat model and effort estimate remain follow-ups |
-| Phase 1A-D investment foundation | Not started | Small PR sequence in section 10; no implementation PR exists |
+| Functional design review | Done for Phase 1 scope | User authorised Phase 1; scoped historical AUD worksheet and review gates are recorded in the implementation note; broader legal/production review remains outstanding |
+| Phase 1A-D investment foundation | Done (scoped implementation) | See implementation note for exact delivered scope, four-parcel boundary and verification; review/release pending |
 | Phase 2A-C fund/AMIT/DRP ledger | Not started | Confirm attribution/timing rules and evidence coverage |
 | Phase 3A residency | Not started | Independent classification, valuation and election review |
 | Phase 3B-C workspace/reconciliation/export | Not started | Reviewed source contributions and finalisation rules |
@@ -233,3 +233,5 @@ The supplied Markdown is preserved byte-for-byte as the product baseline. This c
 Update this table with actual PR links and verification evidence as implementation proceeds. A documentation publication does not change implementation status.
 
 Change log: 2026-10-13 - retained supplied v1.0 baseline; consolidated repository findings and useful pack requirements; recorded phase differences and unresolved decisions; excluded private evidence and local paths.
+
+Implementation update: 2026-10-13 - Phase 1 implemented on an isolated branch following user authorisation; original assessment retained as historical evidence. No private PDFs or taxpayer fixtures added.

@@ -1,5 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import '../models/investment_ledger.dart';
+import '../models/tax_decimal.dart';
+import '../utils/source_fingerprint.dart';
 import '../models/investment_transaction.dart';
+import 'investment_parcel_ledger.dart';
 import '../models/tax_record.dart';
 
 class SaveTaxRecordResult {
@@ -277,30 +282,401 @@ class FirestoreService {
     final normalizedTransaction = _normalizeInvestmentTransactionForWrite(
       transaction,
     );
+    if (normalizedTransaction.isReviewed && !normalizedTransaction.isVoided) {
+      try {
+        final values = [
+          normalizedTransaction.unitsExact,
+          normalizedTransaction.considerationExact,
+          normalizedTransaction.brokerageExact,
+          normalizedTransaction.totalCostExact,
+        ];
+        if (values.any((value) => value == null)) throw const FormatException();
+        final exact = values.map((value) => TaxDecimal.parse(value!)).toList();
+        final legacy = [
+          normalizedTransaction.units,
+          normalizedTransaction.consideration,
+          normalizedTransaction.brokerage,
+          normalizedTransaction.totalCost,
+        ];
+        for (var i = 0; i < legacy.length; i++) {
+          if (!legacy[i].isFinite ||
+              double.parse(exact[i].toString()) != legacy[i]) {
+            throw const FormatException();
+          }
+        }
+        if (exact[0] <= TaxDecimal.zero ||
+            exact[1] <= TaxDecimal.zero ||
+            exact[2].isNegative ||
+            exact[3] <= TaxDecimal.zero ||
+            exact[3] !=
+                (normalizedTransaction.isBuy
+                    ? exact[1] + exact[2]
+                    : exact[1] - exact[2])) {
+          throw const FormatException();
+        }
+      } on FormatException {
+        throw StateError('Reviewed exact facts must reconcile before saving.');
+      }
+    }
     final colRef = _db
         .collection('users')
         .doc(normalizedTransaction.userId)
         .collection('investment_transactions');
 
-    if (normalizedTransaction.id != null &&
-        normalizedTransaction.id!.isNotEmpty) {
-      await colRef.doc(normalizedTransaction.id).set({
-        ...normalizedTransaction.toMap(),
+    final isUpdate = normalizedTransaction.id?.isNotEmpty ?? false;
+    // Legacy randomly keyed facts stay untouched; claim their source identity
+    // under a transaction so future concurrent imports converge on the same ID.
+    final legacyDuplicate = isUpdate
+        ? null
+        : await findInvestmentDuplicate(
+            normalizedTransaction.userId,
+            normalizedTransaction,
+          );
+    final identity = _investmentIdentity(normalizedTransaction);
+    final reservation = _db
+        .collection('users')
+        .doc(transaction.userId)
+        .collection('investment_sources')
+        .doc(identity);
+    final metadata = _ledgerMetadata(transaction.userId);
+    return _db.runTransaction((tx) async {
+      final source = await tx.get(reservation);
+      final ref = colRef.doc(
+        isUpdate
+            ? normalizedTransaction.id!
+            : (source.data()?['transactionId'] as String? ??
+                  legacyDuplicate?.id ??
+                  identity),
+      );
+      final existing = await tx.get(ref);
+      final meta = await tx.get(metadata);
+      if (!isUpdate && existing.exists) {
+        final stored = InvestmentTransaction.fromMap(existing.data()!, ref.id);
+        final candidate = normalizedTransaction.toMap();
+        final previous = stored.toMap();
+        const financialKeys = [
+          'ticker',
+          'transactionType',
+          'tradeDate',
+          'accountNumber',
+          'units',
+          'consideration',
+          'brokerage',
+          'totalCost',
+          'unitsExact',
+          'considerationExact',
+          'brokerageExact',
+          'totalCostExact',
+        ];
+        if (stored.isVoided ||
+            financialKeys.any((key) => previous[key] != candidate[key])) {
+          throw StateError(
+            'Source already exists with different facts. Review and replace explicitly.',
+          );
+        }
+        if (!source.exists) {
+          tx.set(reservation, {
+            'transactionId': ref.id,
+            'userId': transaction.userId,
+          });
+        }
+        return ref.id;
+      }
+      final old = existing.data();
+      if (isUpdate && old == null) {
+        throw StateError('Investment transaction no longer exists. Reload.');
+      }
+      if (old != null &&
+          (old['revision'] ?? 0) != normalizedTransaction.revision) {
+        throw StateError(
+          'Investment transaction changed. Reload before editing.',
+        );
+      }
+      if (old != null && old['isLocked'] == true) {
+        final changes = normalizedTransaction.toMap();
+        final oldFacts = InvestmentTransaction.fromMap(old, ref.id).toMap();
+        for (final key in ['isLocked', 'notes', 'revision']) {
+          changes.remove(key);
+        }
+        if (changes.entries.any(
+          (entry) => oldFacts[entry.key] != entry.value,
+        )) {
+          throw StateError(
+            'Unlock the investment before changing financial facts.',
+          );
+        }
+      }
+      final revision = old == null ? 1 : (old['revision'] as int? ?? 0) + 1;
+      final data = <String, dynamic>{
+        ...(old != null && old['isLocked'] == true
+            ? old
+            : normalizedTransaction.toMap()),
+        'isLocked': normalizedTransaction.isLocked,
+        'notes': normalizedTransaction.notes,
+        'revision': revision,
+        'sourceIdentity': old?['sourceIdentity'] ?? identity,
+        'createdAt': old?['createdAt'] ?? FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      return normalizedTransaction.id!;
-    }
-
-    final newDoc = colRef.doc();
-    await newDoc.set({
-      ...normalizedTransaction.copyWith(id: newDoc.id).toMap(),
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
+      };
+      if (old != null &&
+          old['isLocked'] == true &&
+          !old.containsKey('sourceIdentity')) {
+        data.remove('sourceIdentity');
+      }
+      tx.set(ref, data);
+      if (old != null && (old['revision'] ?? 0) == 0) {
+        tx.set(ref.collection('revisions').doc('0'), old);
+      }
+      tx.set(ref.collection('revisions').doc('$revision'), data);
+      if (!source.exists) {
+        tx.set(reservation, {
+          'transactionId': ref.id,
+          'userId': transaction.userId,
+        });
+      } else if (source.data()?['transactionId'] != ref.id) {
+        throw StateError('This source already belongs to another transaction.');
+      }
+      tx.set(metadata, {
+        'generation': (meta.data()?['generation'] as int? ?? 0) + 1,
+      });
+      return ref.id;
     });
-    return newDoc.id;
   }
 
-  Stream<List<InvestmentTransaction>> getInvestmentTransactions(String userId) {
+  String _investmentIdentity(InvestmentTransaction transaction) {
+    final confirmation = transaction.confirmationNumber?.trim() ?? '';
+    return SourceFingerprint.text(
+      jsonEncode([
+        transaction.sourceParser.trim().toLowerCase(),
+        transaction.accountNumber?.trim() ?? '',
+        if (confirmation.isNotEmpty)
+          ['confirmation', confirmation]
+        else if (transaction.sourceHash?.isNotEmpty ?? false)
+          ['source', transaction.sourceHash]
+        else
+          [
+            'facts',
+            transaction.ticker.trim().toUpperCase(),
+            transaction.transactionType.value,
+            transaction.toMap()['tradeDateIso'],
+            transaction.unitsExact ?? transaction.units.toString(),
+            transaction.totalCostExact ?? transaction.totalCost.toString(),
+          ],
+      ]),
+    );
+  }
+
+  DocumentReference<Map<String, dynamic>> _ledgerMetadata(String userId) => _db
+      .collection('users')
+      .doc(userId)
+      .collection('investment_metadata')
+      .doc('ledger');
+
+  Future<int> getInvestmentLedgerGeneration(String userId) async =>
+      (await _ledgerMetadata(userId).get()).data()?['generation'] as int? ?? 0;
+
+  Stream<int> watchInvestmentLedgerGeneration(String userId) => _ledgerMetadata(
+    userId,
+  ).snapshots().map((doc) => doc.data()?['generation'] as int? ?? 0);
+
+  Future<List<SaleAllocation>> getInvestmentAllocationsOnce(
+    String userId,
+  ) async {
+    final result = await _db
+        .collection('users')
+        .doc(userId)
+        .collection('investment_allocations')
+        .get();
+    return result.docs
+        .map((doc) => SaleAllocation.fromMap(doc.data()))
+        .toList();
+  }
+
+  Future<void> saveInvestmentAllocation(
+    String userId,
+    SaleAllocation allocation, {
+    int? expectedRevision,
+  }) async {
+    final previousRevision = expectedRevision ?? allocation.revision;
+    final generation = await getInvestmentLedgerGeneration(userId);
+    final facts = await getInvestmentTransactionsOnce(userId);
+    final currentAllocations = await getInvestmentAllocationsOnce(userId);
+    final saleFact = facts
+        .where((t) => t.id == allocation.sellTransactionId)
+        .firstOrNull;
+    if (saleFact == null || !saleFact.isSell || saleFact.isLocked) {
+      throw StateError('A current unlocked sale is required.');
+    }
+    final trial = InvestmentParcelLedger().replay(
+      transactions: facts,
+      allocations: [
+        ...currentAllocations.where(
+          (a) => a.sellTransactionId != allocation.sellTransactionId,
+        ),
+        allocation,
+      ],
+      asOfDate: saleFact.tradeDate,
+    );
+    if (trial.needsReview) {
+      throw StateError(
+        'Review facts and quantities before saving parcel selections.',
+      );
+    }
+    final user = _db.collection('users').doc(userId);
+    final ref = user
+        .collection('investment_allocations')
+        .doc(allocation.sellTransactionId);
+    final metadata = _ledgerMetadata(userId);
+    await _db.runTransaction((tx) async {
+      final existing = await tx.get(ref);
+      final meta = await tx.get(metadata);
+      if ((meta.data()?['generation'] ?? 0) != generation) {
+        throw StateError(
+          'Ledger changed. Reload before saving parcel selections.',
+        );
+      }
+      if ((existing.data()?['revision'] ?? 0) != previousRevision) {
+        throw StateError('Parcel selection changed. Reload before saving.');
+      }
+      if (!allocation.transactionRevisions.containsKey(
+            allocation.sellTransactionId,
+          ) ||
+          allocation.selections.any(
+            (selection) => !allocation.transactionRevisions.containsKey(
+              selection.buyTransactionId,
+            ),
+          )) {
+        throw StateError('Parcel selection must include all input revisions.');
+      }
+      for (final entry in allocation.transactionRevisions.entries) {
+        final fact = await tx.get(
+          user.collection('investment_transactions').doc(entry.key),
+        );
+        if (!fact.exists || (fact.data()?['revision'] ?? 0) != entry.value) {
+          throw StateError(
+            'Investment facts changed. Reload parcel selections.',
+          );
+        }
+      }
+      final data = <String, dynamic>{
+        ...allocation.toMap(),
+        'userId': userId,
+        'revision': previousRevision + 1,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      final sale = await tx.get(
+        user
+            .collection('investment_transactions')
+            .doc(allocation.sellTransactionId),
+      );
+      if (sale.data()?['transactionType'] != 'SELL' ||
+          sale.data()?['isLocked'] == true ||
+          sale.data()?['isVoided'] == true) {
+        throw StateError('A current unlocked sale is required.');
+      }
+      tx.set(ref, data);
+      tx.set(ref.collection('revisions').doc('${previousRevision + 1}'), data);
+      tx.set(metadata, {
+        'generation': (meta.data()?['generation'] as int? ?? 0) + 1,
+      });
+    });
+  }
+
+  Future<String> saveInvestmentCalculationSnapshot(
+    String userId,
+    Map<String, dynamic> snapshot,
+  ) async {
+    final user = _db.collection('users').doc(userId);
+    final ref = user.collection('investment_calculation_snapshots').doc();
+    // Copies freeze the user's reviewed inputs during an asynchronous save.
+    snapshot = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(snapshot)) as Map,
+    );
+    await _db.runTransaction((tx) async {
+      final metadata = await tx.get(_ledgerMetadata(userId));
+      if (snapshot['ledgerGeneration'] !=
+          (metadata.data()?['generation'] ?? 0)) {
+        throw StateError(
+          'Ledger changed. Recalculate before saving the worksheet.',
+        );
+      }
+      final revisions = Map<String, dynamic>.from(
+        snapshot['inputRevisions'] as Map? ?? {},
+      );
+      if (revisions.isEmpty) {
+        final provenance = snapshot['snapshot'] as Map?;
+        final context = provenance?['context'] as Map?;
+        if (snapshot['schemaVersion'] != 1 ||
+            snapshot['inputRevisions'] is! Map ||
+            context?['completeHistory'] != true ||
+            context?['priorLossesReviewed'] != true ||
+            (snapshot['openingLossEvidence'] as String? ?? '').trim().isEmpty) {
+          throw StateError(
+            'An empty-year snapshot requires reviewed history and loss evidence.',
+          );
+        }
+      }
+      for (final entry in revisions.entries) {
+        final fact = await tx.get(
+          user.collection('investment_transactions').doc(entry.key),
+        );
+        if (!fact.exists || (fact.data()?['revision'] ?? 0) != entry.value) {
+          throw StateError(
+            'Investment facts changed. Recalculate the worksheet.',
+          );
+        }
+      }
+      final allocationRevisions = Map<String, dynamic>.from(
+        snapshot['allocationRevisions'] as Map? ?? {},
+      );
+      for (final entry in allocationRevisions.entries) {
+        final allocation = await tx.get(
+          user.collection('investment_allocations').doc(entry.key),
+        );
+        if (!allocation.exists ||
+            allocation.data()?['revision'] != entry.value) {
+          throw StateError(
+            'Parcel selections changed. Recalculate the worksheet.',
+          );
+        }
+      }
+      tx.set(ref, {
+        ...snapshot,
+        'userId': userId,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+    return ref.id;
+  }
+
+  Future<List<Map<String, dynamic>>> getInvestmentCalculationSnapshotsOnce(
+    String userId,
+  ) async {
+    final result = await _db
+        .collection('users')
+        .doc(userId)
+        .collection('investment_calculation_snapshots')
+        .orderBy('createdAt', descending: true)
+        .limit(20)
+        .get();
+    return result.docs
+        .map(
+          (doc) => <String, dynamic>{
+            ...doc.data(),
+            'id': doc.id,
+            'createdAt': (doc.data()['createdAt'] as Timestamp?)
+                ?.toDate()
+                .toUtc()
+                .toIso8601String(),
+          },
+        )
+        .toList();
+  }
+
+  Stream<List<InvestmentTransaction>> getInvestmentTransactions(
+    String userId, {
+    bool includeVoided = false,
+  }) {
     return _db
         .collection('users')
         .doc(userId)
@@ -310,13 +686,15 @@ class FirestoreService {
         .map(
           (snapshot) => snapshot.docs
               .map((doc) => InvestmentTransaction.fromMap(doc.data(), doc.id))
+              .where((fact) => includeVoided || !fact.isVoided)
               .toList(),
         );
   }
 
   Future<List<InvestmentTransaction>> getInvestmentTransactionsOnce(
-    String userId,
-  ) async {
+    String userId, {
+    bool includeVoided = false,
+  }) async {
     final snapshot = await _db
         .collection('users')
         .doc(userId)
@@ -325,6 +703,7 @@ class FirestoreService {
         .get();
     return snapshot.docs
         .map((doc) => InvestmentTransaction.fromMap(doc.data(), doc.id))
+        .where((fact) => includeVoided || !fact.isVoided)
         .toList();
   }
 
@@ -332,12 +711,20 @@ class FirestoreService {
     String userId,
     String recordId,
   ) async {
-    await _db
+    final doc = await _db
         .collection('users')
         .doc(userId)
         .collection('investment_transactions')
         .doc(recordId)
-        .delete();
+        .get();
+    if (!doc.exists) return;
+    final fact = InvestmentTransaction.fromMap(doc.data()!, recordId);
+    if (fact.isLocked) throw StateError('Unlock the record before voiding it.');
+    if (!fact.isVoided) {
+      await saveInvestmentTransaction(
+        fact.copyWith(isVoided: true, isReviewed: false),
+      );
+    }
   }
 
   Future<InvestmentTransaction?> findInvestmentDuplicate(
@@ -356,12 +743,16 @@ class FirestoreService {
             'confirmationNumber',
             isEqualTo: candidate.confirmationNumber!.trim(),
           )
-          .limit(1)
           .get();
-      if (byConfirmation.docs.isNotEmpty) {
-        final doc = byConfirmation.docs.first;
-        return InvestmentTransaction.fromMap(doc.data(), doc.id);
+      for (final doc in byConfirmation.docs) {
+        final data = doc.data();
+        if ((data['accountNumber'] ?? '') == (candidate.accountNumber ?? '') &&
+            data['sourceParser'] == candidate.sourceParser) {
+          return InvestmentTransaction.fromMap(data, doc.id);
+        }
       }
+      // A distinct confirmation is a distinct acquisition, even with equal facts.
+      return null;
     }
 
     final fallback = await colRef
@@ -370,11 +761,18 @@ class FirestoreService {
         .where('units', isEqualTo: candidate.units)
         .where('totalCost', isEqualTo: candidate.totalCost)
         .where('tradeDate', isEqualTo: Timestamp.fromDate(candidate.tradeDate))
-        .limit(1)
         .get();
-    if (fallback.docs.isNotEmpty) {
-      final doc = fallback.docs.first;
-      return InvestmentTransaction.fromMap(doc.data(), doc.id);
+    for (final doc in fallback.docs) {
+      if ((candidate.sourceHash?.isNotEmpty ?? false) &&
+          doc.data()['sourceHash'] != null &&
+          doc.data()['sourceHash'] != candidate.sourceHash) {
+        continue;
+      }
+      if ((doc.data()['accountNumber'] ?? '') ==
+              (candidate.accountNumber ?? '') &&
+          doc.data()['sourceParser'] == candidate.sourceParser) {
+        return InvestmentTransaction.fromMap(doc.data(), doc.id);
+      }
     }
     return null;
   }

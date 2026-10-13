@@ -3,6 +3,12 @@ import 'package:simpletaxautoextraction/utils/investment_cgt_utils.dart';
 
 void main() {
   group('investment cgt utils', () {
+    test('rejects normalised impossible dates and ambiguous short years', () {
+      for (final value in ['31/04/2026', '29/02/2025', '2026-13-01', '00/01/2026', '01/01/26']) {
+        expect(parseFlexibleDate(value), isNull);
+      }
+      expect(parseFlexibleDate('29/02/2024'), DateTime(2024, 2, 29));
+    });
     test('parseMoney handles currency format', () {
       expect(parseMoney(r'$3,980.74'), closeTo(3980.74, 0.0001));
       expect(parseMoney('AUD 7.94'), closeTo(7.94, 0.0001));
