@@ -10,6 +10,7 @@ import 'screens/investment_cgt_calculation_setup_screen.dart';
 import 'screens/investment_cgt_home_screen.dart';
 import 'screens/investment_cgt_result_screen.dart';
 import 'screens/investment_cgt_routes.dart';
+import 'screens/investment_ledger_screen.dart';
 import 'screens/investment_transaction_list_screen.dart';
 import 'screens/investment_transaction_upload_screen.dart';
 
@@ -59,6 +60,7 @@ class MyApp extends StatelessWidget {
             const InvestmentTransactionListScreen(),
         InvestmentCgtRoutes.calculate: (_) =>
             const InvestmentCgtCalculationSetupScreen(),
+        InvestmentCgtRoutes.ledger: (_) => const InvestmentLedgerScreen(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == InvestmentCgtRoutes.results) {

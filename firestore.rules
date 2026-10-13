@@ -61,6 +61,43 @@ service cloud.firestore {
       return value == "BUY" || value == "SELL";
     }
 
+    function ledgerGeneration(userId) {
+      let path = /databases/$(database)/documents/users/$(userId)/investment_metadata/ledger;
+      return exists(path) ? get(path).data.generation : 0;
+    }
+
+    function ledgerAdvanced(userId) {
+      return getAfter(/databases/$(database)/documents/users/$(userId)/investment_metadata/ledger).data.generation == ledgerGeneration(userId) + 1;
+    }
+
+    function validAllocation(data, userId, saleId) {
+      let sale = get(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(saleId)).data;
+      return data.keys().hasOnly(['sellTransactionId', 'selections', 'transactionRevisions', 'method', 'revision', 'userId', 'updatedAt'])
+        && data.userId == userId && data.sellTransactionId == saleId
+        && data.selections is list && data.selections.size() > 0 && data.selections.size() <= 4
+        && data.transactionRevisions is map && data.transactionRevisions.size() > 0
+        && data.method == 'specific' && data.revision is int && data.revision > 0
+        && data.updatedAt is timestamp
+        && sale.transactionType == 'SELL' && !sale.isLocked && !sale.get('isVoided', false)
+        && data.transactionRevisions[saleId] == sale.get('revision', 0)
+        && validSelection(data, 0, userId, sale)
+        && (data.selections.size() < 2 || validSelection(data, 1, userId, sale))
+        && (data.selections.size() < 3 || validSelection(data, 2, userId, sale))
+        && (data.selections.size() < 4 || validSelection(data, 3, userId, sale));
+    }
+
+    function validSelection(data, index, userId, sale) {
+      let selection = data.selections[index];
+      let buy = get(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(selection.buyTransactionId)).data;
+      return selection is map && selection.keys().hasOnly(['buyTransactionId', 'units'])
+        && validString(selection.buyTransactionId, 128)
+        && validString(selection.units, 100) && selection.units.matches('^[0-9]+(\\.[0-9]{1,12})?$')
+        && buy.transactionType == 'BUY' && !buy.get('isVoided', false)
+        && buy.ticker == sale.ticker && buy.accountNumber == sale.accountNumber
+        && buy.tradeDate < sale.tradeDate
+        && data.transactionRevisions[selection.buyTransactionId] == buy.get('revision', 0);
+    }
+
     function validInvestmentTransaction(data, userId) {
       return data.keys().hasAll([
           'userId',
@@ -81,12 +118,15 @@ service cloud.firestore {
           'updatedAt'
         ])
         && data.keys().hasOnly([
+          'schemaVersion',
           'userId',
           'ticker',
           'securityName',
           'transactionType',
           'tradeDate',
           'settlementDate',
+          'tradeDateIso',
+          'settlementDateIso',
           'units',
           'averagePrice',
           'consideration',
@@ -100,14 +140,27 @@ service cloud.firestore {
           'parserVersion',
           'notes',
           'isLocked',
+          'isReviewed',
+          'isVoided',
+          'revision',
+          'sourceIdentity',
+          'sourceHash',
+          'unitsExact',
+          'considerationExact',
+          'brokerageExact',
+          'totalCostExact',
+
           'createdAt',
           'updatedAt'
         ])
         && data.userId == userId
+        && data.get('schemaVersion', 1) in [1, 2]
         && validString(data.ticker, 16)
         && validString(data.securityName, 180)
         && validInvestmentType(data.transactionType)
         && (data.tradeDate is timestamp)
+        && validOptionalString(data.get('tradeDateIso', null), 10)
+        && validOptionalString(data.get('settlementDateIso', null), 10)
         && (data.settlementDate == null || data.settlementDate is timestamp)
         && (data.units is number) && data.units > 0
         && (data.averagePrice is number) && data.averagePrice > 0
@@ -122,6 +175,22 @@ service cloud.firestore {
         && validString(data.parserVersion, 24)
         && (data.notes is string) && data.notes.size() <= 2000
         && (data.isLocked is bool)
+        && (data.get('isReviewed', false) is bool)
+        && (data.get('isVoided', false) is bool)
+        && (data.get('revision', 0) is int) && data.get('revision', 0) >= 0
+        && validOptionalString(data.get('sourceIdentity', null), 64)
+        && validOptionalString(data.get('sourceHash', null), 64)
+        && validOptionalString(data.get('unitsExact', null), 100)
+        && validOptionalString(data.get('considerationExact', null), 100)
+        && validOptionalString(data.get('brokerageExact', null), 100)
+        && validOptionalString(data.get('totalCostExact', null), 100)
+        && (!data.get('isReviewed', false) ||
+          (data.schemaVersion == 2
+            && data.tradeDateIso is string && data.tradeDateIso.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+            && data.unitsExact is string && data.unitsExact.matches('^[0-9]+(\\.[0-9]{1,12})?$')
+            && data.considerationExact is string && data.considerationExact.matches('^[0-9]+(\\.[0-9]{1,2})?$')
+            && data.brokerageExact is string && data.brokerageExact.matches('^[0-9]+(\\.[0-9]{1,2})?$')
+            && data.totalCostExact is string && data.totalCostExact.matches('^[0-9]+(\\.[0-9]{1,2})?$')))
         && (data.createdAt is timestamp)
         && (data.updatedAt is timestamp);
     }
@@ -164,9 +233,94 @@ service cloud.firestore {
       }
 
       match /investment_transactions/{transactionId} {
-        allow read, delete: if isOwner(userId);
-        allow create, update: if isOwner(userId)
-          && validInvestmentTransaction(request.resource.data, userId);
+        allow read: if isOwner(userId);
+        allow delete: if false;
+        allow create: if isOwner(userId)
+          && validInvestmentTransaction(request.resource.data, userId)
+          && request.resource.data.revision == 1
+          && ledgerAdvanced(userId)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(transactionId)/revisions/1).data == request.resource.data;
+        allow update: if isOwner(userId)
+          && validInvestmentTransaction(request.resource.data, userId)
+          && request.resource.data.revision == resource.data.get('revision', 0) + 1
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.get('sourceIdentity', null) == resource.data.get('sourceIdentity', request.resource.data.get('sourceIdentity', null))
+          && (!resource.data.isLocked || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isLocked', 'notes', 'revision', 'updatedAt']))
+          && ledgerAdvanced(userId)
+          && (resource.data.get('revision', 0) != 0 ||
+            getAfter(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(transactionId)/revisions/0).data == resource.data)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(transactionId)/revisions/$(request.resource.data.revision)).data == request.resource.data;
+        match /revisions/{revisionId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId)
+            && request.resource.data.userId == userId
+            && ((revisionId == '0'
+              && get(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(transactionId)).data.get('revision', 0) == 0
+              && getAfter(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(transactionId)).data.revision == 1
+              && request.resource.data == get(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(transactionId)).data)
+              || (revisionId == string(request.resource.data.revision)
+                && getAfter(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(transactionId)).data == request.resource.data));
+          allow update, delete: if false;
+        }
+      }
+
+      match /investment_sources/{identity} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['userId', 'transactionId'])
+          && request.resource.data.userId == userId
+          && validString(request.resource.data.transactionId, 128)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(request.resource.data.transactionId)).data.userId == userId;
+        allow update, delete: if false;
+      }
+      match /investment_metadata/{metadataId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && metadataId == 'ledger'
+          && request.resource.data.keys().hasOnly(['generation'])
+          && request.resource.data.generation is int
+          && request.resource.data.generation == ledgerGeneration(userId) + 1;
+        allow delete: if false;
+      }
+      match /investment_allocations/{saleId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && resource == null
+          && request.resource.data.revision == 1
+          && validAllocation(request.resource.data, userId, saleId)
+          && ledgerAdvanced(userId)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/investment_allocations/$(saleId)/revisions/1).data == request.resource.data;
+        allow update: if isOwner(userId) && resource != null
+          && request.resource.data.revision == resource.data.revision + 1
+          && validAllocation(request.resource.data, userId, saleId)
+          && ledgerAdvanced(userId)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/investment_allocations/$(saleId)/revisions/$(request.resource.data.revision)).data == request.resource.data;
+        allow delete: if false;
+        match /revisions/{revisionId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId)
+            && request.resource.data.userId == userId && request.resource.data.sellTransactionId == saleId
+            && revisionId == string(request.resource.data.revision)
+            && getAfter(/databases/$(database)/documents/users/$(userId)/investment_allocations/$(saleId)).data == request.resource.data;
+          allow update, delete: if false;
+        }
+      }
+      match /investment_calculation_snapshots/{snapshotId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['schemaVersion', 'calculationVersion', 'ruleVersion', 'year', 'status',
+            'issues', 'totalCapitalGains', 'currentYearLosses', 'priorLossesUsed', 'lossesCarriedForward',
+            'netCapitalGain', 'lossApplications', 'snapshot', 'ledgerGeneration', 'inputRevisions',
+            'allocationRevisions', 'openingLossEvidence', 'inputHash', 'calculatedAt', 'userId', 'createdAt'])
+          && request.resource.data.userId == userId
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.inputRevisions is map
+          && (request.resource.data.inputRevisions.size() > 0 ||
+            (request.resource.data.schemaVersion == 1 && request.resource.data.snapshot is map
+              && request.resource.data.snapshot.context.completeHistory == true
+              && request.resource.data.snapshot.context.priorLossesReviewed == true
+              && validString(request.resource.data.openingLossEvidence, 2000)))
+          && request.resource.data.ledgerGeneration is int
+          && request.resource.data.ledgerGeneration == ledgerGeneration(userId);
+        allow update, delete: if false;
       }
     }
   }

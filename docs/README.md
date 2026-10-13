@@ -6,8 +6,9 @@
 - [Implementation gap analysis](product/IMPLEMENTATION_GAP_ANALYSIS.md) - repository evidence, proposed architecture, migration, phase mapping and implementation status.
 - [Document requirements](product/DOCUMENT_REQUIREMENTS.md) - evidence coverage, parser boundaries and privacy requirements.
 - [Tax source register](product/ATO_SOURCE_REGISTER.md) - source access status, year applicability and unresolved rule verification.
+- [Phase 1 implementation](product/PHASE_1_IMPLEMENTATION.md) - delivered scope, usage, migration, security and verification.
 
-These documents describe future work. They do not establish implemented tax-rule coverage or verified personal tax results.
+The v1.0 plan describes proposed scope; the implementation note records delivered coverage. Neither establishes verified personal tax results or a complete tax-law implementation.
 
 ## Harness Engineering Layer
 

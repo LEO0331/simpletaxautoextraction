@@ -114,6 +114,10 @@ lib/
 
 ## ✅ Pre-launch checklist
 
+Phase 1 adds a separate realised investment ledger and annual CGT worksheet. Review BUY/SELL facts, select specific acquisition parcels, track remaining units, apply reviewed annual losses and save immutable calculation snapshots. The existing unrealised estimator remains separate. See [Phase 1 usage and boundaries](docs/product/PHASE_1_IMPLEMENTATION.md).
+
+The initial worksheet is limited to supported ordinary AUD resident-individual scenarios in FY2024-2025/FY2025-2026 and four parcels per sale. Fund/residency/special-event gaps require review. Publish the updated Firestore rules before releasing this client. Confidential PDFs are parsed locally and kept out of Git; public tests use synthetic data.
+
 - Publish latest `firestore.rules` from this repo.
 - Enable HTTPS-only hosting for production.
 - Review `web/index.html`, `web/robots.txt`, and `web/sitemap.xml` metadata after deploy.

@@ -20,7 +20,12 @@ class InvestmentDraftSyncService {
     final index = _pendingDrafts.indexWhere(
       (d) =>
           d.userId == transaction.userId &&
+          d.accountNumber == transaction.accountNumber &&
+          d.confirmationNumber == transaction.confirmationNumber &&
+          d.sourceHash == transaction.sourceHash &&
           d.ticker == transaction.ticker &&
+          (d.unitsExact ?? d.units.toString()) ==
+              (transaction.unitsExact ?? transaction.units.toString()) &&
           d.tradeDate == transaction.tradeDate &&
           d.totalCost == transaction.totalCost &&
           d.transactionType == transaction.transactionType,
@@ -32,10 +37,13 @@ class InvestmentDraftSyncService {
     }
   }
 
-  Future<int> syncAll(FirestoreService firestoreService) async {
+  Future<int> syncAll(
+    FirestoreService firestoreService, {
+    required String userId,
+  }) async {
     int synced = 0;
     final toRemove = <InvestmentTransaction>[];
-    for (final d in _pendingDrafts) {
+    for (final d in _pendingDrafts.where((d) => d.userId == userId).toList()) {
       try {
         await firestoreService.saveInvestmentTransaction(d);
         toRemove.add(d);

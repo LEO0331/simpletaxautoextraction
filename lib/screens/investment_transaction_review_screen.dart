@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/investment_transaction.dart';
+import '../models/tax_decimal.dart';
 import '../services/parsers/commsec_trade_confirmation_parser.dart';
 import '../utils/investment_cgt_utils.dart';
 
@@ -36,7 +37,7 @@ class _InvestmentTransactionReviewScreenState
   late final TextEditingController _confirmationNo;
   late final TextEditingController _accountNo;
   late final TextEditingController _notes;
-  late InvestmentTransactionType _type;
+  InvestmentTransactionType? _type;
   bool _isLocked = false;
 
   @override
@@ -44,7 +45,10 @@ class _InvestmentTransactionReviewScreenState
     super.initState();
     final draft = widget.extraction.draft;
     final existing = widget.existing;
-    _type = existing?.transactionType ?? draft.transactionType;
+    _type = existing != null && !existing.isReviewed
+        ? null
+        : existing?.transactionType ??
+              (draft.directionNeedsReview ? null : draft.transactionType);
     _isLocked = existing?.isLocked ?? false;
     _ticker = TextEditingController(text: existing?.ticker ?? draft.ticker);
     _securityName = TextEditingController(
@@ -57,9 +61,12 @@ class _InvestmentTransactionReviewScreenState
       text: _formatDate(existing?.settlementDate ?? draft.settlementDate),
     );
     _units = TextEditingController(
-      text: (existing?.units ?? draft.units ?? 0) == 0
-          ? ''
-          : (existing?.units ?? draft.units ?? 0).toString(),
+      text:
+          existing?.unitsExact ??
+          draft.unitsExact ??
+          ((existing?.units ?? draft.units ?? 0) == 0
+              ? ''
+              : (existing?.units ?? draft.units ?? 0).toString()),
     );
     _averagePrice = TextEditingController(
       text: (existing?.averagePrice ?? draft.averagePrice ?? 0) == 0
@@ -67,14 +74,19 @@ class _InvestmentTransactionReviewScreenState
           : (existing?.averagePrice ?? draft.averagePrice ?? 0).toString(),
     );
     _consideration = TextEditingController(
-      text: (existing?.consideration ?? draft.consideration ?? 0) == 0
-          ? ''
-          : (existing?.consideration ?? draft.consideration ?? 0).toString(),
+      text:
+          existing?.considerationExact ??
+          draft.considerationExact ??
+          ((existing?.consideration ?? draft.consideration ?? 0) == 0
+              ? ''
+              : (existing?.consideration ?? draft.consideration ?? 0)
+                    .toString()),
     );
     _brokerage = TextEditingController(
-      text: (existing?.brokerage ?? draft.brokerage ?? 0) == 0
-          ? ''
-          : (existing?.brokerage ?? draft.brokerage ?? 0).toString(),
+      text:
+          existing?.brokerageExact ??
+          draft.brokerageExact ??
+          (existing?.brokerage ?? draft.brokerage ?? 0).toString(),
     );
     _gst = TextEditingController(
       text: (existing?.gst ?? draft.gst ?? 0) == 0
@@ -82,9 +94,12 @@ class _InvestmentTransactionReviewScreenState
           : (existing?.gst ?? draft.gst ?? 0).toString(),
     );
     _totalCost = TextEditingController(
-      text: (existing?.totalCost ?? draft.totalCost ?? 0) == 0
-          ? ''
-          : (existing?.totalCost ?? draft.totalCost ?? 0).toString(),
+      text:
+          existing?.totalCostExact ??
+          draft.totalCostExact ??
+          ((existing?.totalCost ?? draft.totalCost ?? 0) == 0
+              ? ''
+              : (existing?.totalCost ?? draft.totalCost ?? 0).toString()),
     );
     _confirmationNo = TextEditingController(
       text: existing?.confirmationNumber ?? draft.confirmationNumber ?? '',
@@ -121,24 +136,52 @@ class _InvestmentTransactionReviewScreenState
   }
 
   void _save() {
+    if (_type == null) {
+      _showError('Explicitly select BUY or SELL.');
+      return;
+    }
     final tradeDate = parseFlexibleDate(_tradeDate.text.trim());
     if (tradeDate == null) {
       _showError('Trade date is required and must be valid.');
       return;
     }
-    final units = double.tryParse(_units.text.trim()) ?? 0;
-    final averagePrice = double.tryParse(_averagePrice.text.trim()) ?? 0;
-    final consideration = parseMoney(_consideration.text.trim());
-    final brokerage = parseMoney(_brokerage.text.trim());
-    final parsedTotalCost = parseMoney(_totalCost.text.trim());
-    final totalCost = parsedTotalCost > 0
-        ? parsedTotalCost
-        : consideration + brokerage;
+    final exactTexts = [
+      _units.text,
+      _averagePrice.text,
+      _consideration.text,
+      _brokerage.text,
+      _totalCost.text,
+    ].map((text) => text.trim()).toList();
+    final decimals = <TaxDecimal>[];
+    try {
+      for (var i = 0; i < exactTexts.length; i++) {
+        final decimal = TaxDecimal.parse(exactTexts[i]);
+        if (decimal.scale > (i < 2 ? 12 : 2)) throw const FormatException();
+        decimals.add(decimal);
+      }
+    } on FormatException {
+      _showError(
+        'Enter valid decimals: units and price up to 12 places, money up to 2 places.',
+      );
+      return;
+    }
+    final units = double.parse(exactTexts[0]);
+    final averagePrice = double.parse(exactTexts[1]);
+    final consideration = double.parse(exactTexts[2]);
+    final brokerage = double.parse(exactTexts[3]);
+    final totalCost = double.parse(exactTexts[4]);
 
     if (_ticker.text.trim().isEmpty ||
         _securityName.text.trim().isEmpty ||
+        !units.isFinite ||
         units <= 0 ||
+        !averagePrice.isFinite ||
         averagePrice <= 0 ||
+        !consideration.isFinite ||
+        consideration <= 0 ||
+        !brokerage.isFinite ||
+        brokerage < 0 ||
+        !totalCost.isFinite ||
         totalCost <= 0) {
       _showError(
         'Ticker, name, units, average price, and total cost are required.',
@@ -147,16 +190,39 @@ class _InvestmentTransactionReviewScreenState
     }
 
     final settlement = parseFlexibleDate(_settlementDate.text.trim());
+    if (_settlementDate.text.trim().isNotEmpty && settlement == null) {
+      _showError('Settlement date must be a valid calendar date.');
+      return;
+    }
+    final expectedTotal = _type == InvestmentTransactionType.sell
+        ? decimals[2] - decimals[3]
+        : decimals[2] + decimals[3];
+    if (decimals[4] != expectedTotal) {
+      _showError(
+        'Total must equal gross consideration ${_type == InvestmentTransactionType.sell ? 'minus' : 'plus'} brokerage (GST included).',
+      );
+      return;
+    }
     final gstValue = _gst.text.trim().isEmpty
         ? null
         : parseMoney(_gst.text.trim());
+    if (_gst.text.trim().isNotEmpty &&
+        (!RegExp(r'^\d+(\.\d{1,2})?$').hasMatch(_gst.text.trim()) ||
+            gstValue == null ||
+            !gstValue.isFinite ||
+            gstValue < 0 ||
+            gstValue > brokerage)) {
+      _showError('GST must be a valid amount included in brokerage.');
+      return;
+    }
 
     final tx = InvestmentTransaction(
+      // Source identity is required for audited parcel calculations.
       id: widget.existing?.id,
       userId: widget.userId,
       ticker: _ticker.text.trim().toUpperCase(),
       securityName: _securityName.text.trim(),
-      transactionType: _type,
+      transactionType: _type!,
       tradeDate: tradeDate,
       settlementDate: settlement,
       units: units,
@@ -165,6 +231,14 @@ class _InvestmentTransactionReviewScreenState
       brokerage: brokerage,
       gst: gstValue,
       totalCost: totalCost,
+      unitsExact: exactTexts[0],
+      considerationExact: exactTexts[2],
+      brokerageExact: exactTexts[3],
+      totalCostExact: exactTexts[4],
+      sourceHash: widget.existing?.sourceHash,
+      isReviewed: true,
+      isVoided: false,
+      revision: widget.existing?.revision ?? 0,
       confirmationNumber: _confirmationNo.text.trim().isEmpty
           ? null
           : _confirmationNo.text.trim(),
@@ -181,6 +255,14 @@ class _InvestmentTransactionReviewScreenState
       createdAt: widget.existing?.createdAt,
       updatedAt: widget.existing?.updatedAt,
     );
+    if (_accountNo.text.trim().isEmpty ||
+        (widget.extraction.draft.sourceParser == 'Manual entry' &&
+            _confirmationNo.text.trim().isEmpty)) {
+      _showError(
+        'Account identifier and a manual source reference are required.',
+      );
+      return;
+    }
     Navigator.pop(context, tx);
   }
 
@@ -241,10 +323,15 @@ class _InvestmentTransactionReviewScreenState
           _field('Settlement date', _settlementDate),
           _field('Units', _units),
           _field('Average price', _averagePrice),
-          _field('Consideration', _consideration),
-          _field('Brokerage', _brokerage),
-          _field('GST', _gst),
-          _field('Total cost', _totalCost),
+          _field('Gross consideration', _consideration),
+          _field('Brokerage (GST included)', _brokerage),
+          _field('GST included in brokerage', _gst),
+          _field(
+            _type == InvestmentTransactionType.sell
+                ? 'Net proceeds'
+                : 'Total cost',
+            _totalCost,
+          ),
           _field('Confirmation number', _confirmationNo),
           _field('Account number', _accountNo),
           _field('Notes', _notes, maxLines: 3),

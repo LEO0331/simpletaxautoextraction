@@ -133,7 +133,7 @@ class ExportService {
   ) {
     final buffer = StringBuffer();
     buffer.writeln(
-      'Ticker,Security Name,Type,Trade Date,Units,Cost Base,Cut-off Date,Cut-off Price,Market Value,Estimated Gain/Loss,Gain/Loss %,Holding Days,Potential Discount Eligible,Estimated Taxable Gain',
+      'Ticker,Security Name,Type,Trade Date,Units,Cost Base,Cut-off Date,Cut-off Price,Market Value,Estimated Gain/Loss,Gain/Loss %,Holding Days,Potential Discount Eligible,Hypothetical Discounted Gain Before Annual Losses',
     );
     for (final c in calculations) {
       final t = c.transaction;

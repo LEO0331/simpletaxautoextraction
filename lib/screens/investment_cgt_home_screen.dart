@@ -44,6 +44,12 @@ class InvestmentCgtHomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 _ActionCard(
+                  title: 'Realised CGT and parcel ledger',
+                  onTap: () =>
+                      Navigator.pushNamed(context, InvestmentCgtRoutes.ledger),
+                ),
+                const SizedBox(height: 12),
+                _ActionCard(
                   title: 'Run CGT estimate',
                   onTap: () => Navigator.pushNamed(
                     context,

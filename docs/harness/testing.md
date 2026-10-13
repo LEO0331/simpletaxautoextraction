@@ -49,6 +49,17 @@ flutter analyze --fatal-infos --fatal-warnings
 flutter test
 ```
 
+Phase 1 rules verification uses `scripts/test_firestore_rules.py` against a disposable local `demo-phase1` Firestore emulator on `127.0.0.1:8186`. The script uses Python's standard library and synthetic data only; it never contacts production. CI downloads the pinned v1.19.8 emulator (SHA-256 verified) and runs the same checks separately from Flutter tests.
+
+For an existing local emulator JAR under ignored `build/emulator/`, start it with:
+
+```bash
+java -Duser.language=en -Duser.country=US -jar build/emulator/cloud-firestore-emulator-v1.19.8.jar --host 127.0.0.1 --port 8186 --project_id demo-phase1 --rules firestore.rules
+python scripts/test_firestore_rules.py
+```
+
+Run the Python command in a second terminal, and stop the emulator after verification. The locale flags avoid missing-message-bundle errors on Traditional Chinese Windows. Emulator tests exercise real permission enforcement; fake Firestore tests alone do not.
+
 Focused examples:
 
 ```bash

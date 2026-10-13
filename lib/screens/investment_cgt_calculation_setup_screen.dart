@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models/investment_transaction.dart';
+import '../models/investment_ledger.dart';
+import '../models/tax_decimal.dart';
+import '../services/investment_parcel_ledger.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import 'investment_cgt_result_screen.dart';
@@ -29,6 +32,8 @@ class _InvestmentCgtCalculationSetupScreenState
   final Map<String, TextEditingController> _priceControllers = {};
   bool _loading = true;
   List<InvestmentTransaction> _transactions = const [];
+  List<SaleAllocation> _allocations = const [];
+  String? _loadError;
   List<String> _tickers = const [];
 
   @override
@@ -49,20 +54,34 @@ class _InvestmentCgtCalculationSetupScreenState
       }
       return;
     }
-    final records = await _firestoreService.getInvestmentTransactionsOnce(
-      user.uid,
-    );
-    final buys = records.where((r) => r.isBuy).toList();
-    final tickerSet = buys.map((e) => e.ticker).toSet().toList()..sort();
-    for (final t in tickerSet) {
-      _priceControllers[t] = TextEditingController();
-    }
-    if (mounted) {
-      setState(() {
-        _transactions = buys;
-        _tickers = tickerSet;
-        _loading = false;
-      });
+    try {
+      final records = await _firestoreService.getInvestmentTransactionsOnce(
+        user.uid,
+      );
+      final allocations = await _firestoreService.getInvestmentAllocationsOnce(
+        user.uid,
+      );
+      final buys = records.where((r) => r.isBuy).toList();
+      final tickerSet = buys.map((e) => e.ticker).toSet().toList()..sort();
+      for (final t in tickerSet) {
+        _priceControllers[t] = TextEditingController();
+      }
+      if (mounted) {
+        setState(() {
+          _transactions = records;
+          _allocations = allocations;
+          _tickers = tickerSet;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadError =
+              'Unable to load transactions and parcel selections. Please retry.';
+        });
+      }
     }
   }
 
@@ -80,10 +99,52 @@ class _InvestmentCgtCalculationSetupScreenState
       return;
     }
 
+    final day = DateTime.utc(
+      _cutOffDate!.year,
+      _cutOffDate!.month,
+      _cutOffDate!.day,
+    );
+    var requiredTickers = _transactions
+        .where(
+          (t) =>
+              t.isBuy &&
+              !DateTime.utc(
+                t.tradeDate.year,
+                t.tradeDate.month,
+                t.tradeDate.day,
+              ).isAfter(day),
+        )
+        .map((t) => t.ticker)
+        .toSet();
+    if (_transactions.any(
+      (t) =>
+          t.isSell &&
+          !DateTime.utc(
+            t.tradeDate.year,
+            t.tradeDate.month,
+            t.tradeDate.day,
+          ).isAfter(day),
+    )) {
+      final ledger = InvestmentParcelLedger().replay(
+        transactions: _transactions,
+        allocations: _allocations,
+        asOfDate: _cutOffDate,
+      );
+      if (ledger.needsReview) {
+        _showError(
+          'Review transaction facts and sale selections in the parcel ledger first.',
+        );
+        return;
+      }
+      requiredTickers = ledger.parcels
+          .where((p) => p.remainingUnits > TaxDecimal.zero)
+          .map((p) => p.ticker)
+          .toSet();
+    }
     final prices = <String, double>{};
-    for (final t in _tickers) {
+    for (final t in requiredTickers) {
       final v = double.tryParse(_priceControllers[t]!.text.trim());
-      if (v == null || v <= 0) {
+      if (v == null || !v.isFinite || v <= 0) {
         _showError('Cut-off price is required and must be > 0 for $t.');
         return;
       }
@@ -91,7 +152,11 @@ class _InvestmentCgtCalculationSetupScreenState
     }
 
     final hasInvalidDate = _transactions.any(
-      (tx) => _cutOffDate!.isBefore(tx.tradeDate),
+      (tx) => DateTime.utc(
+        tx.tradeDate.year,
+        tx.tradeDate.month,
+        tx.tradeDate.day,
+      ).isAfter(day),
     );
     if (hasInvalidDate) {
       _showError(
@@ -106,6 +171,7 @@ class _InvestmentCgtCalculationSetupScreenState
         cutOffDate: _cutOffDate!,
         tickerPrices: prices,
         transactions: _transactions,
+        allocations: _allocations,
       ),
     );
   }
@@ -120,6 +186,8 @@ class _InvestmentCgtCalculationSetupScreenState
       appBar: AppBar(title: const Text('CGT Calculation Setup')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : _loadError != null
+          ? Center(child: Text(_loadError!))
           : _transactions.isEmpty
           ? const Center(child: Text('No BUY transactions available.'))
           : ListView(
@@ -153,6 +221,9 @@ class _InvestmentCgtCalculationSetupScreenState
                 ),
                 const SizedBox(height: 8),
                 const Text('Cut-off price per ticker'),
+                const Text(
+                  'Only remaining holdings at the selected cut-off require a price.',
+                ),
                 const SizedBox(height: 8),
                 ..._tickers.map(
                   (t) => Padding(
