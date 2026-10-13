@@ -168,6 +168,9 @@ class RealisedDisposal {
 }
 
 class InvestmentLedgerResult {
+  final List<Map<String, dynamic>> statementsSnapshot;
+  final List<FundCapitalGainEvent> fundGains;
+  final List<Map<String, dynamic>> costBaseHistory;
   final List<InvestmentParcel> parcels;
   final List<RealisedDisposal> disposals;
   final List<String> issues;
@@ -177,13 +180,31 @@ class InvestmentLedgerResult {
     required List<RealisedDisposal> disposals,
     required List<String> issues,
     required List<Map<String, dynamic>> inputSnapshot,
+    List<Map<String, dynamic>> statementsSnapshot = const [],
+    List<FundCapitalGainEvent> fundGains = const [],
+    List<Map<String, dynamic>> costBaseHistory = const [],
   }) : parcels = List.unmodifiable(parcels),
+       statementsSnapshot = List.unmodifiable(
+         statementsSnapshot.map(freezeTaxSnapshot),
+       ),
+       fundGains = List.unmodifiable(fundGains),
+       costBaseHistory = List.unmodifiable(
+         costBaseHistory.map(freezeTaxSnapshot),
+       ),
        disposals = List.unmodifiable(disposals),
        issues = List.unmodifiable(issues),
        inputSnapshot = List.unmodifiable(inputSnapshot.map(freezeTaxSnapshot));
   bool get needsReview => issues.isNotEmpty;
   Map<String, dynamic> toMap() => {
-    'calculationVersion': 'parcel-v1',
+    'calculationVersion': 'parcel-v2',
+    'statementsSnapshot': statementsSnapshot,
+    'statementRevisions': {
+      for (final s in statementsSnapshot)
+        if (s['id'] is String && (s['id'] as String).isNotEmpty)
+          s['id']: s['revision'],
+    },
+    'fundGains': fundGains.map((g) => g.toMap()).toList(),
+    'costBaseHistory': costBaseHistory,
     'parcels': parcels.map((p) => p.toMap()).toList(),
     'disposals': disposals.map((d) => d.toMap()).toList(),
     'issues': issues,
@@ -194,6 +215,32 @@ class InvestmentLedgerResult {
         if (t['allocation'] != null)
           t['id']: (t['allocation'] as Map)['revision'],
     },
+  };
+}
+
+class FundCapitalGainEvent {
+  final String statementId, reference, kind;
+  final DateTime date;
+  final TaxDecimal gain;
+  final bool discountEligible;
+  final DateTime? acquisitionDate;
+  const FundCapitalGainEvent({
+    required this.statementId,
+    required this.reference,
+    required this.kind,
+    required this.date,
+    required this.gain,
+    required this.discountEligible,
+    this.acquisitionDate,
+  });
+  Map<String, dynamic> toMap() => {
+    'statementId': statementId,
+    'reference': reference,
+    'kind': kind,
+    'date': date.toIso8601String(),
+    'gain': gain.toString(),
+    'discountEligible': discountEligible,
+    'acquisitionDate': acquisitionDate?.toIso8601String(),
   };
 }
 

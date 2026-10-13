@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/investment_transaction.dart';
 import '../models/investment_ledger.dart';
 import '../models/tax_decimal.dart';
+import '../models/managed_fund_statement.dart';
 import '../services/investment_parcel_ledger.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
@@ -33,7 +36,11 @@ class _InvestmentCgtCalculationSetupScreenState
   bool _loading = true;
   List<InvestmentTransaction> _transactions = const [];
   List<SaleAllocation> _allocations = const [];
+  List<ManagedFundStatement> _statements = const [];
   String? _loadError;
+  String? _ownerUid;
+  int _generation = 0;
+  StreamSubscription<dynamic>? _authChanges;
   List<String> _tickers = const [];
 
   @override
@@ -41,6 +48,22 @@ class _InvestmentCgtCalculationSetupScreenState
     super.initState();
     _authService = widget.authService ?? AuthService();
     _firestoreService = widget.firestoreService ?? FirestoreService();
+    _ownerUid = _authService.currentUser?.uid;
+    _authChanges = _authService.authStateChanges.listen((user) {
+      if (mounted && user?.uid != _ownerUid) {
+        setState(() {
+          _transactions = const [];
+          _allocations = const [];
+          _statements = const [];
+          _tickers = const [];
+          for (final controller in _priceControllers.values) {
+            controller.clear();
+          }
+          _loadError = 'Account changed. Reopen the investment workspace.';
+          _loading = false;
+        });
+      }
+    });
     _load();
   }
 
@@ -55,6 +78,9 @@ class _InvestmentCgtCalculationSetupScreenState
       return;
     }
     try {
+      final generation = await _firestoreService.getInvestmentLedgerGeneration(
+        user.uid,
+      );
       final records = await _firestoreService.getInvestmentTransactionsOnce(
         user.uid,
       );
@@ -62,6 +88,14 @@ class _InvestmentCgtCalculationSetupScreenState
         user.uid,
       );
       final buys = records.where((r) => r.isBuy).toList();
+      final statements = await _firestoreService.getManagedFundStatementsOnce(
+        user.uid,
+      );
+      if (generation !=
+          await _firestoreService.getInvestmentLedgerGeneration(user.uid)) {
+        throw StateError('Ledger changed during load.');
+      }
+      if (!mounted || _authService.currentUser?.uid != _ownerUid) return;
       final tickerSet = buys.map((e) => e.ticker).toSet().toList()..sort();
       for (final t in tickerSet) {
         _priceControllers[t] = TextEditingController();
@@ -69,7 +103,9 @@ class _InvestmentCgtCalculationSetupScreenState
       if (mounted) {
         setState(() {
           _transactions = records;
+          _generation = generation;
           _allocations = allocations;
+          _statements = statements;
           _tickers = tickerSet;
           _loading = false;
         });
@@ -87,13 +123,34 @@ class _InvestmentCgtCalculationSetupScreenState
 
   @override
   void dispose() {
+    _authChanges?.cancel();
     for (final c in _priceControllers.values) {
       c.dispose();
     }
     super.dispose();
   }
 
-  void _calculate() {
+  Future<void> _calculate() async {
+    if (_ownerUid == null || _authService.currentUser?.uid != _ownerUid) return;
+    try {
+      final generation = await _firestoreService.getInvestmentLedgerGeneration(
+        _ownerUid!,
+      );
+      if (!mounted || _authService.currentUser?.uid != _ownerUid) return;
+      if (generation != _generation) {
+        _showError(
+          'Sources changed. Reopen the estimate to load current facts.',
+        );
+        return;
+      }
+    } catch (_) {
+      if (mounted) {
+        _showError(
+          'Unable to verify current sources. Retry before calculating.',
+        );
+      }
+      return;
+    }
     if (_cutOffDate == null) {
       _showError('Cut-off date is required.');
       return;
@@ -116,18 +173,20 @@ class _InvestmentCgtCalculationSetupScreenState
         )
         .map((t) => t.ticker)
         .toSet();
-    if (_transactions.any(
-      (t) =>
-          t.isSell &&
-          !DateTime.utc(
-            t.tradeDate.year,
-            t.tradeDate.month,
-            t.tradeDate.day,
-          ).isAfter(day),
-    )) {
+    if (_statements.isNotEmpty ||
+        _transactions.any(
+          (t) =>
+              t.isSell &&
+              !DateTime.utc(
+                t.tradeDate.year,
+                t.tradeDate.month,
+                t.tradeDate.day,
+              ).isAfter(day),
+        )) {
       final ledger = InvestmentParcelLedger().replay(
         transactions: _transactions,
         allocations: _allocations,
+        statements: _statements,
         asOfDate: _cutOffDate,
       );
       if (ledger.needsReview) {
@@ -172,6 +231,7 @@ class _InvestmentCgtCalculationSetupScreenState
         tickerPrices: prices,
         transactions: _transactions,
         allocations: _allocations,
+        statements: _statements,
       ),
     );
   }

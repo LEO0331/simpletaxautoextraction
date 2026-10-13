@@ -50,6 +50,12 @@ class InvestmentCgtHomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 _ActionCard(
+                  title: 'Annual fund statements, AMIT and DRP',
+                  onTap: () =>
+                      Navigator.pushNamed(context, InvestmentCgtRoutes.funds),
+                ),
+                const SizedBox(height: 12),
+                _ActionCard(
                   title: 'Run CGT estimate',
                   onTap: () => Navigator.pushNamed(
                     context,

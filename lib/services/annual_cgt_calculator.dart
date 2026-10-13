@@ -153,27 +153,31 @@ class AnnualCgtCalculator {
       remaining.clear();
     }
     final events =
-        ledger.disposals.where((d) => year.contains(d.disposalDate)).toList()
-          ..sort((a, b) {
-            final eligibility = (a.discountEligible ? 1 : 0).compareTo(
-              b.discountEligible ? 1 : 0,
-            );
-            if (eligibility != 0) return eligibility;
-            final date = a.disposalDate.compareTo(b.disposalDate);
-            return date != 0
-                ? date
-                : '${a.sellTransactionId}/${a.buyTransactionId}'.compareTo(
-                    '${b.sellTransactionId}/${b.buyTransactionId}',
-                  );
-          });
-    if (events.any((d) => d.acquisitionDate.isBefore(DateTime(1999, 9, 21)))) {
+        [
+          ...ledger.disposals.map(_AnnualCgtEvent.disposal),
+          ...ledger.fundGains.map(_AnnualCgtEvent.fund),
+        ].where((d) => year.contains(d.disposalDate)).toList()..sort((a, b) {
+          final eligibility = (a.discountEligible ? 1 : 0).compareTo(
+            b.discountEligible ? 1 : 0,
+          );
+          if (eligibility != 0) return eligibility;
+          final date = a.disposalDate.compareTo(b.disposalDate);
+          return date != 0
+              ? date
+              : '${a.sellTransactionId}/${a.buyTransactionId}'.compareTo(
+                  '${b.sellTransactionId}/${b.buyTransactionId}',
+                );
+        });
+    if (events.any(
+      (d) => (d.acquisitionDate?.isBefore(DateTime(1999, 9, 21)) ?? false),
+    )) {
       issues.add('Pre-CGT or indexed-era acquisitions require tax review');
     }
     if (events.any(
       (d) =>
-          d.acquisitionDate.month == 2 &&
-          d.acquisitionDate.day == 29 &&
-          d.disposalDate.year == d.acquisitionDate.year + 1 &&
+          d.acquisitionDate?.month == 2 &&
+          d.acquisitionDate?.day == 29 &&
+          d.disposalDate.year == d.acquisitionDate!.year + 1 &&
           !d.disposalDate.isAfter(DateTime(d.disposalDate.year, 3, 1)),
     )) {
       issues.add('Leap-day anniversary boundary requires tax review');
@@ -219,6 +223,8 @@ class AnnualCgtCalculator {
       applications.add({
         'sellTransactionId': d.sellTransactionId,
         'buyTransactionId': d.buyTransactionId,
+        'sourceKind': d.sourceKind,
+        if (d.statementId != null) 'statementId': d.statementId,
         'currentLossUsed': currentUsed.toString(),
         'priorLossUsed': priorUsed.toString(),
         'priorLossOriginsUsed': originsUsed,
@@ -237,7 +243,7 @@ class AnnualCgtCalculator {
       netCapitalGain: issues.isEmpty ? net : null,
       lossApplications: applications,
       snapshot: {
-        'calculationVersion': 'annual-cgt-v1',
+        'calculationVersion': 'annual-cgt-v2',
         'ruleVersion': 'AU-individual-resident-${year.toString()}-v1',
         'context': context.toMap(),
         'ledger': ledger.toMap(),
@@ -266,4 +272,34 @@ class AnnualCgtCalculator {
       },
     );
   }
+}
+
+/// Annual gain sources retain their actual dates: fund attribution is not a sale.
+class _AnnualCgtEvent {
+  final String sellTransactionId, buyTransactionId, sourceKind;
+  final String? statementId;
+  final DateTime? acquisitionDate;
+  final DateTime disposalDate;
+  final TaxDecimal capitalGain, capitalLoss;
+  final bool discountEligible;
+  _AnnualCgtEvent.disposal(RealisedDisposal d)
+    : sellTransactionId = d.sellTransactionId,
+      buyTransactionId = d.buyTransactionId,
+      sourceKind = 'disposal',
+      statementId = null,
+      acquisitionDate = d.acquisitionDate,
+      disposalDate = d.disposalDate,
+      capitalGain = d.capitalGain,
+      capitalLoss = d.capitalLoss,
+      discountEligible = d.discountEligible;
+  _AnnualCgtEvent.fund(FundCapitalGainEvent g)
+    : sellTransactionId = 'fund:${g.statementId}:${g.kind}',
+      buyTransactionId = g.reference,
+      sourceKind = g.kind,
+      statementId = g.statementId,
+      acquisitionDate = g.acquisitionDate,
+      disposalDate = g.date,
+      capitalGain = g.gain,
+      capitalLoss = TaxDecimal.zero,
+      discountEligible = g.discountEligible;
 }

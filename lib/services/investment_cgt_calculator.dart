@@ -3,6 +3,7 @@ import '../models/investment_cgt_summary.dart';
 import '../models/investment_transaction.dart';
 import '../models/investment_ledger.dart';
 import '../models/tax_decimal.dart';
+import '../models/managed_fund_statement.dart';
 import 'investment_parcel_ledger.dart';
 import '../utils/investment_cgt_utils.dart';
 
@@ -28,6 +29,7 @@ class InvestmentCgtCalculator {
     required Map<String, double> tickerPrices,
     required List<InvestmentTransaction> transactions,
     List<SaleAllocation> allocations = const [],
+    List<ManagedFundStatement> statements = const [],
   }) {
     final calculations = <InvestmentCgtCalculation>[];
     final excluded = <InvestmentTransaction>[];
@@ -45,10 +47,12 @@ class InvestmentCgtCalculator {
             DateTime(cutOffDate.year, cutOffDate.month, cutOffDate.day),
           ),
     );
-    if (hasSales) {
+    final usesLedger = hasSales || statements.any((s) => !s.isVoided);
+    if (usesLedger) {
       final ledger = InvestmentParcelLedger().replay(
         transactions: transactions,
         allocations: allocations,
+        statements: statements,
         asOfDate: cutOffDate,
       );
       issues.addAll(ledger.issues);
@@ -74,7 +78,9 @@ class InvestmentCgtCalculator {
       if (!transaction.units.isFinite ||
           transaction.units <= 0 ||
           !transaction.totalCost.isFinite ||
-          transaction.totalCost <= 0) {
+          (usesLedger
+              ? transaction.totalCost < 0
+              : transaction.totalCost <= 0)) {
         excluded.add(transaction);
         issues.add(
           '${transaction.ticker}: missing or invalid units/cost base; review the transaction.',

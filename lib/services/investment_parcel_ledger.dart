@@ -1,12 +1,14 @@
 import '../models/investment_ledger_fact.dart';
 import '../models/investment_ledger.dart';
 import '../models/tax_decimal.dart';
+import '../models/managed_fund_statement.dart';
 
 /// Replays explicit allocations. An invalid sale is atomic and consumes no units.
 class InvestmentParcelLedger {
   InvestmentLedgerResult replay({
     required List<InvestmentLedgerFact> transactions,
     required List<SaleAllocation> allocations,
+    List<ManagedFundStatement> statements = const [],
     DateTime? asOfDate,
     bool reviewedFacts = true,
   }) {
@@ -14,6 +16,221 @@ class InvestmentParcelLedger {
     final parcels = <String, InvestmentParcel>{};
     final disposals = <RealisedDisposal>[];
     final snapshots = <Map<String, dynamic>>[];
+    final statementSnapshots = <Map<String, dynamic>>[];
+    final history = <Map<String, dynamic>>[];
+    final fundGains = <FundCapitalGainEvent>[];
+    final validStatements = <ManagedFundStatement>[];
+    final statementIdentities = <String>{},
+        statementIds = <String>{},
+        drpIds = <String>{};
+    final owners = transactions
+        .where((t) => !t.isVoided)
+        .map((t) => t.userId)
+        .toSet();
+    final statementOwners = statements
+        .where(
+          (s) =>
+              !s.isVoided &&
+              (asOfDate == null ||
+                  !DateTime.utc(s.yearStart, 7).isAfter(
+                    DateTime.utc(asOfDate.year, asOfDate.month, asOfDate.day),
+                  )),
+        )
+        .map((s) => s.userId)
+        .toSet();
+    for (final statement in statements.where(
+      (s) =>
+          !s.isVoided &&
+          (asOfDate == null ||
+              !DateTime.utc(s.yearStart, 7).isAfter(
+                DateTime.utc(asOfDate.year, asOfDate.month, asOfDate.day),
+              )),
+    )) {
+      statementSnapshots.add({'id': statement.id, ...statement.toMap()});
+      final errors = statement.validation();
+      if (statementOwners.length > 1) {
+        errors.add('Statements must belong to one user');
+      }
+      if (!statement.isReviewed) errors.add('Statement must be reviewed');
+      if (statement.id == null ||
+          statement.id!.isEmpty ||
+          !statementIds.add(statement.id!)) {
+        errors.add('Missing or duplicate statement identity');
+      }
+      if (!statementIdentities.add(statement.identity)) {
+        errors.add(
+          'Duplicate annual statement requires replacement, not addition',
+        );
+      }
+      if (owners.isNotEmpty &&
+          (owners.length != 1 || !owners.contains(statement.userId))) {
+        errors.add('Statement owner does not match transactions');
+      }
+      for (final d in errors.isEmpty ? statement.drpLinks : <FundDrpLink>[]) {
+        final matches = transactions
+            .where((t) => !t.isVoided && t.id == d.buyTransactionId)
+            .toList();
+        if (!drpIds.add(d.buyTransactionId) || matches.length != 1) {
+          errors.add('DRP acquisition missing or linked more than once');
+          continue;
+        }
+        final buy = matches.single;
+        try {
+          if (!buy.isBuy ||
+              !buy.isReviewed ||
+              buy.userId != statement.userId ||
+              buy.ticker != statement.ticker ||
+              buy.accountNumber != statement.accountNumber ||
+              !TaxYear(statement.yearStart).contains(buy.tradeDate) ||
+              buy.totalCostExact == null ||
+              TaxDecimal.parse(buy.totalCostExact!) !=
+                  TaxDecimal.parse(d.reinvestedAmount)) {
+            errors.add(
+              'DRP must reconcile with the reviewed existing acquisition',
+            );
+          }
+        } on FormatException {
+          errors.add('Invalid DRP acquisition amount');
+        }
+      }
+      if (errors.isNotEmpty) {
+        issues.addAll(errors.map((e) => '${statement.id ?? 'statement'}: $e'));
+        continue;
+      }
+      validStatements.add(statement);
+      final date = DateTime.utc(statement.yearStart + 1, 6, 30);
+      if (asOfDate == null ||
+          !date.isAfter(
+            DateTime.utc(asOfDate.year, asOfDate.month, asOfDate.day),
+          )) {
+        for (final key in ['discountedCapitalGain', 'otherCapitalGain']) {
+          final gain =
+              statement.component(key) *
+              (key == 'discountedCapitalGain'
+                  ? TaxDecimal.parse('2')
+                  : TaxDecimal.one);
+          if (!gain.isZero) {
+            fundGains.add(
+              FundCapitalGainEvent(
+                statementId: statement.id!,
+                reference: key,
+                kind: 'attributed',
+                date: date,
+                gain: gain,
+                discountEligible: key == 'discountedCapitalGain',
+              ),
+            );
+          }
+        }
+      }
+    }
+    if (statementSnapshots.map((s) => s['userId']).toSet().length > 1) {
+      issues.add('Statements must belong to one user');
+    }
+    final pendingYearEnd =
+        <MapEntry<ManagedFundStatement, FundCostBaseAdjustment>>[
+          for (final statement in validStatements)
+            for (final a in statement.adjustments)
+              if (a.beforeSaleId == null) MapEntry(statement, a),
+        ]..sort((a, b) => a.value.date.compareTo(b.value.date));
+    void recordAdjustment(
+      ManagedFundStatement statement,
+      FundCostBaseAdjustment adjustment,
+      InvestmentParcel parcel,
+      TaxDecimal basis,
+      TaxDecimal reduced,
+      TaxDecimal amount,
+    ) {
+      final adjusted = basis + amount;
+      final excess = adjusted.isNegative
+          ? TaxDecimal.zero - adjusted
+          : TaxDecimal.zero;
+      history.add({
+        'statementId': statement.id,
+        'statementRevision': statement.revision,
+        ...adjustment.toMap(),
+        'openingCostBase': basis.toString(),
+        'closingCostBase': (adjusted.isNegative ? TaxDecimal.zero : adjusted)
+            .toString(),
+        'openingReducedCostBase': reduced.toString(),
+        'closingReducedCostBase':
+            ((reduced + amount).isNegative ? TaxDecimal.zero : reduced + amount)
+                .toString(),
+        'e10Gain': excess.toString(),
+      });
+      if (!excess.isZero) {
+        final date = parseFundDate(adjustment.date);
+        final anniversary = DateTime.utc(
+          parcel.acquisitionDate.year + 1,
+          parcel.acquisitionDate.month,
+          parcel.acquisitionDate.day,
+        );
+        fundGains.add(
+          FundCapitalGainEvent(
+            statementId: statement.id!,
+            reference: adjustment.parcelId,
+            kind: 'E10',
+            date: date,
+            gain: excess,
+            discountEligible: date.isAfter(anniversary),
+            acquisitionDate: parcel.acquisitionDate,
+          ),
+        );
+      }
+    }
+
+    void applyYearEnd(DateTime? before) {
+      while (pendingYearEnd.isNotEmpty) {
+        final entry = pendingYearEnd.first,
+            a = entry.value,
+            statement = entry.key;
+        final date = parseFundDate(a.date);
+        if (before != null && !date.isBefore(before)) break;
+        if (asOfDate != null &&
+            date.isAfter(
+              DateTime.utc(asOfDate.year, asOfDate.month, asOfDate.day),
+            )) {
+          break;
+        }
+        pendingYearEnd.removeAt(0);
+        final parcel = parcels[a.parcelId];
+        if (parcel == null ||
+            parcel.ticker != statement.ticker ||
+            parcel.accountNumber != statement.accountNumber ||
+            parcel.remainingUnits <= TaxDecimal.zero ||
+            parcel.remainingUnits != TaxDecimal.parse(a.units!)) {
+          issues.add(
+            '${statement.id}: Year-end adjustment interest does not match retained parcel',
+          );
+          continue;
+        }
+        final amount = TaxDecimal.parse(a.amount),
+            basis = parcel.remainingCostBase + amount,
+            reduced = parcel.remainingReducedCostBase + amount;
+        recordAdjustment(
+          statement,
+          a,
+          parcel,
+          parcel.remainingCostBase,
+          parcel.remainingReducedCostBase,
+          amount,
+        );
+        parcels[a.parcelId] = InvestmentParcel(
+          buyTransactionId: parcel.buyTransactionId,
+          ticker: parcel.ticker,
+          accountNumber: parcel.accountNumber,
+          acquisitionDate: parcel.acquisitionDate,
+          originalUnits: parcel.originalUnits,
+          remainingUnits: parcel.remainingUnits,
+          originalCostBase: parcel.originalCostBase,
+          remainingCostBase: basis.isNegative ? TaxDecimal.zero : basis,
+          remainingReducedCostBase: reduced.isNegative
+              ? TaxDecimal.zero
+              : reduced,
+        );
+      }
+    }
+
     final ordered =
         transactions
             .where((t) => !t.isVoided)
@@ -45,6 +262,9 @@ class InvestmentParcelLedger {
     final seen = <String>{};
     final sourceIdentities = <String>{};
     for (final t in ordered) {
+      applyYearEnd(
+        DateTime.utc(t.tradeDate.year, t.tradeDate.month, t.tradeDate.day),
+      );
       final id = t.id;
       if (id == null || id.isEmpty || !seen.add(id)) {
         issues.add('Missing or duplicate transaction identity');
@@ -159,6 +379,7 @@ class InvestmentParcelLedger {
         var selectedUnits = TaxDecimal.zero;
         final staged = <String, InvestmentParcel>{};
         final stagedDisposals = <RealisedDisposal>[];
+        final stagedAdjustments = <void Function()>[];
         var allocatedProceeds = TaxDecimal.zero;
         var allocatedFees = TaxDecimal.zero;
         var allocationUnitsRemaining = units;
@@ -202,16 +423,49 @@ class InvestmentParcelLedger {
           }
           selectedUnits += quantity;
           final full = quantity == parcel.remainingUnits;
-          final basis = full
+          final unadjustedBasis = full
               ? parcel.remainingCostBase
               : (parcel.remainingCostBase * quantity).divide(
                   parcel.remainingUnits,
                 );
-          final reduced = full
+          final unadjustedReduced = full
               ? parcel.remainingReducedCostBase
               : (parcel.remainingReducedCostBase * quantity).divide(
                   parcel.remainingUnits,
                 );
+          var basis = unadjustedBasis, reduced = unadjustedReduced;
+          for (final statement in validStatements) {
+            for (final adjustment in statement.adjustments.where(
+              (a) =>
+                  a.beforeSaleId == id &&
+                  a.parcelId == selection.buyTransactionId,
+            )) {
+              if (statement.ticker != t.ticker ||
+                  statement.accountNumber != t.accountNumber ||
+                  parseFundDate(adjustment.date) != soldDay ||
+                  TaxDecimal.parse(adjustment.units!) != quantity) {
+                throw const FormatException(
+                  'Pre-disposal adjustment scope does not match sold interest',
+                );
+              }
+              final amount = TaxDecimal.parse(adjustment.amount);
+              final openingBasis = basis, openingReduced = reduced;
+              basis += amount;
+              reduced += amount;
+              if (basis.isNegative) basis = TaxDecimal.zero;
+              if (reduced.isNegative) reduced = TaxDecimal.zero;
+              stagedAdjustments.add(
+                () => recordAdjustment(
+                  statement,
+                  adjustment,
+                  parcel,
+                  openingBasis,
+                  openingReduced,
+                  amount,
+                ),
+              );
+            }
+          }
           final last = index == allocation.selections.length - 1;
           if (quantity > allocationUnitsRemaining) {
             throw FormatException('Allocation exceeds sale quantity');
@@ -237,8 +491,9 @@ class InvestmentParcelLedger {
             originalUnits: parcel.originalUnits,
             remainingUnits: parcel.remainingUnits - quantity,
             originalCostBase: parcel.originalCostBase,
-            remainingCostBase: parcel.remainingCostBase - basis,
-            remainingReducedCostBase: parcel.remainingReducedCostBase - reduced,
+            remainingCostBase: parcel.remainingCostBase - unadjustedBasis,
+            remainingReducedCostBase:
+                parcel.remainingReducedCostBase - unadjustedReduced,
           );
           stagedDisposals.add(
             RealisedDisposal(
@@ -261,8 +516,35 @@ class InvestmentParcelLedger {
         }
         parcels.addAll(staged);
         disposals.addAll(stagedDisposals);
+        for (final apply in stagedAdjustments) {
+          apply();
+        }
       } on FormatException catch (error) {
         issues.add('$id: ${error.message}');
+      }
+    }
+    applyYearEnd(null);
+    for (final statement in validStatements) {
+      for (final adjustment in statement.adjustments.where(
+        (a) => a.beforeSaleId != null,
+      )) {
+        final date = parseFundDate(adjustment.date);
+        if (asOfDate != null &&
+            date.isAfter(
+              DateTime.utc(asOfDate.year, asOfDate.month, asOfDate.day),
+            )) {
+          continue;
+        }
+        if (!history.any(
+          (h) =>
+              h['statementId'] == statement.id &&
+              h['parcelId'] == adjustment.parcelId &&
+              h['beforeSaleId'] == adjustment.beforeSaleId,
+        )) {
+          issues.add(
+            '${statement.id}: Pre-disposal adjustment has no successfully allocated sale',
+          );
+        }
       }
     }
     for (final allocation in allocations) {
@@ -274,6 +556,9 @@ class InvestmentParcelLedger {
       }
     }
     return InvestmentLedgerResult(
+      statementsSnapshot: statementSnapshots,
+      fundGains: fundGains,
+      costBaseHistory: history,
       parcels: List.unmodifiable(parcels.values),
       disposals: List.unmodifiable(disposals),
       issues: List.unmodifiable(issues),

@@ -223,9 +223,9 @@ The supplied Markdown is preserved byte-for-byte as the product baseline. This c
 |---|---|---|
 | Phase 0 repository audit and design proposal | Done | Sections 1-12; baseline strict analysis and 118 test passes |
 | Phase 0 documentation consolidation | Done | Supplied baseline plus this synthesis, requirements and source register; documentation links/privacy checks |
-| Functional design review | Done for Phase 1 scope | User authorised Phase 1; scoped historical AUD worksheet and review gates are recorded in the implementation note; broader legal/production review remains outstanding |
+| Functional design review | Done for scoped Phase 1/2 | Historical AUD worksheet, manual fund review, explicit AMIT/DRP evidence and exclusions are recorded in the implementation notes; broader legal/production review remains outstanding |
 | Phase 1A-D investment foundation | Done (scoped implementation) | See implementation note for exact delivered scope, four-parcel boundary and verification; review/release pending |
-| Phase 2A-C fund/AMIT/DRP ledger | Not started | Confirm attribution/timing rules and evidence coverage |
+| Phase 2A-C fund/AMIT/DRP ledger | Done (scoped implementation) | See [Phase 2 implementation](PHASE_2_IMPLEMENTATION.md) for manual review, historical AMIT, DRP links, reconciliation and release boundaries |
 | Phase 3A residency | Not started | Independent classification, valuation and election review |
 | Phase 3B-C workspace/reconciliation/export | Not started | Reviewed source contributions and finalisation rules |
 | Optional AI convenience | Not started | Deterministic foundation first; no paid service approved |

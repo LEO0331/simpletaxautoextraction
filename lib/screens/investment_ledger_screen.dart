@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/investment_ledger.dart';
 import '../models/investment_transaction.dart';
 import '../models/tax_decimal.dart';
+import '../models/managed_fund_statement.dart';
 import '../services/annual_cgt_calculator.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
@@ -13,6 +14,7 @@ import '../services/investment_parcel_ledger.dart';
 import '../utils/file_exporter.dart';
 import '../utils/source_fingerprint.dart';
 import 'investment_cgt_home_screen.dart';
+import 'managed_fund_statement_screen.dart';
 
 /// Phase 1 worksheet: explicit selections, reviewed facts, and review gates.
 class InvestmentLedgerScreen extends StatefulWidget {
@@ -33,6 +35,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
   late final FirestoreService _store;
   List<InvestmentTransaction> _transactions = [];
   List<SaleAllocation> _allocations = [];
+  List<ManagedFundStatement> _statements = [];
   List<Map<String, dynamic>> _savedSnapshots = [];
   int _generation = 0;
   int _year = 2025;
@@ -65,6 +68,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
         setState(() {
           _transactions = [];
           _allocations = [];
+          _statements = [];
           _savedSnapshots = [];
           _snapshot = null;
           _stale = true;
@@ -120,17 +124,19 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
       final generation = await _store.getInvestmentLedgerGeneration(uid);
       final transactions = await _store.getInvestmentTransactionsOnce(uid);
       final allocations = await _store.getInvestmentAllocationsOnce(uid);
+      final statements = await _store.getManagedFundStatementsOnce(uid);
       final savedSnapshots = await _store.getInvestmentCalculationSnapshotsOnce(
         uid,
       );
       if (generation != await _store.getInvestmentLedgerGeneration(uid)) {
         throw StateError('Ledger changed while loading.');
       }
-      if (!mounted) return;
+      if (!mounted || _auth.currentUser?.uid != _ownerUid) return;
       setState(() {
         _generation = generation;
         _transactions = transactions;
         _allocations = allocations;
+        _statements = statements;
         _savedSnapshots = savedSnapshots;
         _snapshot = null;
         _stale = false;
@@ -152,6 +158,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
       InvestmentParcelLedger().replay(
         transactions: _transactions,
         allocations: allocations ?? _allocations,
+        statements: _statements,
         asOfDate: DateTime(_year + 1, 6, 30),
       );
 
@@ -171,6 +178,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
     final earlier = InvestmentParcelLedger().replay(
       transactions: _transactions,
       allocations: _allocations,
+      statements: _statements.where((s) => s.isReviewed).toList(),
       asOfDate: DateTime(
         sale.tradeDate.year,
         sale.tradeDate.month,
@@ -237,7 +245,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                                 '${p.acquisitionDate.toIso8601String().split('T').first}: '
                                 '${p.remainingUnits} units available',
                             helperText:
-                                'Remaining acquisition basis before adjustments: AUD ${p.remainingCostBase}',
+                                'Remaining adjusted basis: AUD ${p.remainingCostBase}',
                           ),
                         ),
                       ),
@@ -287,6 +295,9 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                     );
                     final trial = InvestmentParcelLedger().replay(
                       transactions: _transactions,
+                      statements: _statements
+                          .where((s) => s.isReviewed)
+                          .toList(),
                       allocations: [
                         ..._allocations.where(
                           (a) => a.sellTransactionId != sale.id,
@@ -385,12 +396,13 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
     );
     final input = {
       'schemaVersion': 1,
-      'calculationVersion': 'annual-cgt-v1',
+      'calculationVersion': result.snapshot['calculationVersion'],
       'ruleVersion': result.snapshot['ruleVersion'],
       ...result.toMap(),
       'ledgerGeneration': _generation,
       'inputRevisions': ledger.toMap()['inputRevisions'],
       'allocationRevisions': ledger.toMap()['allocationRevisions'],
+      'statementRevisions': ledger.toMap()['statementRevisions'],
       'openingLossEvidence': _lossEvidence.text.trim(),
     };
     setState(
@@ -534,6 +546,23 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                 ),
                 const SizedBox(height: 12),
                 const Text('Recorded remaining holdings at 30 June'),
+                TextButton.icon(
+                  icon: const Icon(Icons.receipt_long),
+                  label: const Text('Annual fund statements, AMIT and DRP'),
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => ManagedFundStatementScreen(
+                                authService: _auth,
+                                firestoreService: _store,
+                              ),
+                            ),
+                          );
+                          if (mounted) await _load();
+                        },
+                ),
                 if (_transactions.isEmpty)
                   const Text(
                     'No transactions. Import and review acquisitions first.',
@@ -547,13 +576,41 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                 ))
                   ListTile(
                     title: Text('${p.ticker}: ${p.remainingUnits} units'),
-                    subtitle: Text(
+                    subtitle: SelectableText(
                       'Acquired ${p.acquisitionDate.toIso8601String().split('T').first} · '
-                      'Acquisition basis before fund/corporate adjustments: AUD ${p.remainingCostBase}',
+                      'Adjusted cost base: AUD ${p.remainingCostBase}\nParcel ID: ${p.buyTransactionId}',
                     ),
                   ),
                 for (final issue in ledger.issues)
                   Text(issue, style: const TextStyle(color: Colors.red)),
+                if (ledger.costBaseHistory.isNotEmpty)
+                  ExpansionTile(
+                    title: const Text('AMIT cost-base history'),
+                    children: [
+                      for (final adjustment in ledger.costBaseHistory)
+                        ListTile(
+                          title: Text(
+                            '${adjustment['date']} · parcel ${adjustment['parcelId']}',
+                          ),
+                          subtitle: Text(
+                            'Statement ${adjustment['statementId']} revision ${adjustment['statementRevision']}\n'
+                            'Basis ${adjustment['openingCostBase']} → ${adjustment['closingCostBase']} · '
+                            'adjustment ${adjustment['amount']} · E10 gain ${adjustment['e10Gain']}\n'
+                            'Evidence: ${adjustment['evidenceReference']}',
+                          ),
+                        ),
+                    ],
+                  ),
+                for (final gain in ledger.fundGains.where(
+                  (g) => TaxYear(_year).contains(g.date),
+                ))
+                  ListTile(
+                    title: Text('${gain.kind} capital gain: AUD ${gain.gain}'),
+                    subtitle: Text(
+                      'Statement ${gain.statementId} · ${gain.reference} · '
+                      'Potential discount eligible: ${gain.discountEligible}',
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 const Text('Disposals — select specific acquisition parcels'),
                 for (final sale in sales)
@@ -562,9 +619,9 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                       title: Text(
                         '${sale.ticker}: ${sale.unitsExact ?? sale.units} units sold',
                       ),
-                      subtitle: Text(
+                      subtitle: SelectableText(
                         '${sale.tradeDate.toIso8601String().split('T').first} · '
-                        '${sale.isReviewed ? 'Reviewed' : 'Review transaction first'}',
+                        '${sale.isReviewed ? 'Reviewed' : 'Review transaction first'}\nSale ID: ${sale.id}',
                       ),
                       trailing: TextButton(
                         key: ValueKey('allocate-${sale.id}'),
@@ -596,8 +653,8 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                   ),
                 const Divider(),
                 const Text(
-                  'Annual worksheet: ordinary AUD investments only. Fund statements, '
-                  'AMIT adjustments and residency events require separate review; do not confirm '
+                  'Annual worksheet: reviewed ordinary AUD investments and supported AMIT statements. '
+                  'Missing statements, special fund treatment and residency events require review; do not confirm '
                   'the items below unless supported by your records.',
                 ),
                 _confirmation(

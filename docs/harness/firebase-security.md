@@ -23,6 +23,9 @@ Current collections:
 - `users/{userId}/properties/{propertyId}`
 - `users/{userId}/settings/mappings`
 - `users/{userId}/investment_transactions/{transactionId}`
+- `users/{userId}/managed_fund_statements/{statementId}` and immutable `revisions/{revision}`
+
+Managed fund parent writes validate statement fields, components and adjustment slices. The mandatory matching immutable revision write validates DRP links. Both checks must succeed atomically for identical facts; preserve this paired validation when changing rules to avoid the Firestore expression limit. Statement changes must advance the shared investment ledger generation. Client calculation saves additionally check statement revision references; server rules do not certify numerical tax results.
 
 ## Rules Standards
 

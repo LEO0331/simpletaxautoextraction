@@ -1,6 +1,6 @@
 # Tax source register
 
-Version 1.0 - accessed/reviewed for architecture on 13 October 2026. These references support planning, not a certified or complete taxpayer-specific ruleset. No tax calculation engine has been implemented. The supplied plan's historical links remain unchanged; this register records their limits.
+Version 1.1 - accessed/reviewed for architecture and scoped Phase 1/2 implementation on 13 October 2026. These references support historical worksheet rules, not a certified or complete taxpayer-specific ruleset. See [Phase 2 scope](PHASE_2_IMPLEMENTATION.md) for implemented rules and exclusions. The supplied plan's historical links remain unchanged; this register records their limits.
 
 | ID | Source / topic | Access and applicability | Implementation gate |
 |---|---|---|---|
@@ -18,6 +18,8 @@ Version 1.0 - accessed/reviewed for architecture on 13 October 2026. These refer
 
 Rule ID/version; specific proposition and exceptions; financial years and event-date applicability; authoritative URL and section; access date and retrieval status; reviewed interpretation; reviewer and approval date; engine/fixture versions; known exclusions. Recheck the applicable compilation and amendments when approving a pack. A publication date or reachable URL is not approval.
 
-Open coverage includes first target years, acquisition/disposal fee and GST treatment, reduced cost bases, leap-day boundaries, AMIT attribution/timing/E10, non-AMIT payments, DRP acquisition/residual cash, corporate actions/rollovers, loss origins and restrictions, residency transitions, foreign currency, rental deductibility and future reforms. Unsupported facts/rules return NeedsTaxReview.
+Scoped Phase 1/2 coverage includes reviewed ordinary AUD acquisition/disposal fees, separate bases, explicit AMIT timing/attribution and E10, linked DRP acquisitions/residual cash, and reviewed loss origins for FY2024–2025/FY2025–2026 worksheets. Taxpayer-specific attribution, issuer layouts, special reduced-basis treatment, leap-day boundaries, non-AMIT payments, corporate actions/rollovers, loss restrictions, residency transitions, foreign currency, rental deductibility and future reforms remain open. Unsupported facts/rules return NeedsTaxReview.
+
+Phase 2 research update: July 2026 legislative text re-retrieved for ss 104-107A/B. Indexed ATO Part C and LCR 2015/11 guidance rechecked for attributed gain gross-up; full-page access failed. [TD 2000/3](https://www.ato.gov.au/law/view/view.htm?docid=TXD%2FTD20003%2FNAT%2FATO%2F00001) indexed guidance checked for reinvested acquisition cost. See the Phase 2 note for applicability limits.
 
 Change log: 2026-10-13 - initial register distinguishes retrieved, indexed-only and unverified sources; functional rule approval remains outstanding.

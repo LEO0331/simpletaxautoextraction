@@ -47,6 +47,8 @@ Legacy records are unreviewed until deliberately checked. Reviewed facts include
 
 No PDFs are persisted by this feature. Hash source bytes locally, keep private originals outside Git and use synthetic tests. The rules must be deployed before releasing the updated client; this implementation does not deploy production rules.
 
+Phase 2 adds reviewed manual fund statements and `parcel-v2` / `annual-cgt-v2`. Apply signed AMIT adjustments to evidenced units just before the relevant sale or 30 June, adjusting both bases and recording excess-to-zero E10 separately. Never infer annual allocation from year-end units. Gross up the discounted attributed component once before personal losses/discount; the statement gross total is a reconciliation field, not another event. DRP links reference existing reviewed BUYs and never create duplicate parcels. Amend one account/fund/year identity with immutable revisions; all statement changes advance generation and invalidate worksheets. Portfolio estimates must replay the same fund history. Non-AMIT treatment remains review-gated. See the Phase 2 implementation note for bounded storage limits and unsupported statement components.
+
 ## User Flow
 
 Preferred flow:
