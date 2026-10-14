@@ -16,6 +16,13 @@ Investment PDFs:
 - Output draft/result: `InvestmentTransactionDraft` and `InvestmentExtractionResult`
 - Expected source: CommSec-style trade confirmation PDF text extraction.
 
+Managed-fund PDFs:
+- Local extraction: `lib/services/managed_fund_pdf_service.dart`; deterministic adapter: `lib/services/parsers/managed_fund_statement_parser.dart`.
+- Select up to five pages of one annual statement. Preserve spatial attribution columns; do not replace missing attribution with cash or offsets.
+- Output is always an unreviewed `ManagedFundStatement` draft. Missing values stay blank; never infer AMIT parcel allocations or DRP purchases.
+- Field evidence is page/field labels only. Keep source values in the transient draft; no raw text, identifying filenames or personal figures in logs/tests.
+- The optional private integration test takes path/page ranges from environment variables. Assert boolean numeric comparisons so failures cannot echo actual or expected personal amounts.
+
 ## Privacy Constraints
 
 - Never commit real user PDFs or broker confirmations.

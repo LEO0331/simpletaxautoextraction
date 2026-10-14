@@ -21,13 +21,13 @@ The owner-scoped `users/{uid}/managed_fund_statements/{id}` identity is account/
 
 ## Scope and remaining boundaries
 
-- Manual structured review is delivered. Issuer-specific AMMA PDF parsers remain future work pending redacted layout fixtures. No original PDF, extracted PDF text or personal source fixture is uploaded or committed.
+- Manual structured review is delivered. A [14 October PDF import follow-up](MANAGED_FUND_PDF_PARSING.md) adds reviewed iShares/Betashares specimen adapters with page selection and manual fallback. Wider issuer/layout coverage remains future work. No original PDF, extracted PDF text or personal source fixture is uploaded or committed.
 - Automatic tax calculations remain limited to the reviewed FY2024–2025 and FY2025–2026 resident-individual rules used in Phase 1. Earlier source years can inform cost history; future tax-rule years remain unsupported.
 - Non-AMIT statements can be captured as drafts, but their distinct non-assessable payment/E4 treatment requires tax review. Indexed components, corporate actions, foreign currency, residency transitions and unusual trust concessions remain outside automatic coverage.
 - Statement components are a supported subset. Do not fold unsupported indexed gains or special concessions into another component merely to make totals reconcile.
 - Explicit attribution evidence is required. The app does not infer a valid parcel allocation by dividing an annual total across year-end holdings.
 - Each statement currently supports four adjustment slices and four DRP links. Larger annual records require expanded, emulator-tested storage support; do not split one annual statement into duplicate active records.
-- Production Firestore rules deployment and taxpayer-specific source verification remain release steps. This change does not deploy rules, publish the site, create a PR or merge the branch.
+- The user reported Phase 2 Firestore rules deployed on 14 October 2026; deployment was not independently inspected. Taxpayer-specific source verification remains a review step. The PDF follow-up changes no rules/schema and does not publish the site, create a PR or merge the branch.
 
 ## Tax references checked for this design
 
