@@ -318,12 +318,12 @@ class _StatementEditorState extends State<_StatementEditor> {
     for (final e in initial.entries) {
       _fields[e.key] = TextEditingController(text: e.value);
     }
-    for (final key in ManagedFundStatement.componentKeys) {
+    for (final key in ManagedFundStatement.allComponentKeys) {
       _components[key] = TextEditingController(text: s?.components[key] ?? '0');
     }
     _adjustments = [...?s?.adjustments];
     _drp = [...?s?.drpLinks];
-    _regime = s?.regime ?? 'AMIT';
+    _regime = s?.regime == 'non-AMIT' ? 'NON_AMIT' : s?.regime ?? 'AMIT';
     _voided = s?.isVoided ?? false;
     // Any correction must be deliberately reviewed again.
     _authChanges = widget.auth.authStateChanges.listen((_) {
@@ -390,7 +390,10 @@ class _StatementEditorState extends State<_StatementEditor> {
     isReviewed: _reviewed,
     isVoided: _voided,
     components: {
-      for (final e in _components.entries) e.key: e.value.text.trim(),
+      for (final e in _components.entries)
+        if (_regime == 'NON_AMIT' ||
+            ManagedFundStatement.componentKeys.contains(e.key))
+          e.key: e.value.text.trim(),
     },
     adjustments: [..._adjustments],
     drpLinks: [..._drp],
@@ -423,6 +426,8 @@ class _StatementEditorState extends State<_StatementEditor> {
       if (!text(adjustment.parcelId, 128) ||
           !text(adjustment.evidenceReference, 1000) ||
           !signedMoney.hasMatch(adjustment.amount) ||
+          (adjustment.reducedAmount != null &&
+              !signedMoney.hasMatch(adjustment.reducedAmount!)) ||
           (adjustment.beforeSaleId != null &&
               !text(adjustment.beforeSaleId!, 128)) ||
           (adjustment.units != null && !units.hasMatch(adjustment.units!))) {
@@ -535,10 +540,13 @@ class _StatementEditorState extends State<_StatementEditor> {
   }
 
   Future<void> _adjustment([int? index]) async {
-    if (index == null && _adjustments.length >= 4) return;
-    final row = await _rowDialog('Cost-base adjustment', const {
+    final row = await _rowDialog('Cost-base adjustment', {
       'parcelId': 'Acquisition transaction ID',
-      'amount': 'Signed AUD amount: shortfall positive, excess negative',
+      'amount': _regime == 'NON_AMIT'
+          ? 'Cost-base change: negative tax-deferred amount'
+          : 'Signed AUD amount: shortfall positive, excess negative',
+      if (_regime == 'NON_AMIT')
+        'reducedAmount': 'Reduced basis change: negative deferred + tax-free',
       'date': 'Effective date (YYYY-MM-DD)',
       'units': 'Evidenced interest units',
       'evidenceReference': 'Allocation evidence reference',
@@ -548,6 +556,7 @@ class _StatementEditorState extends State<_StatementEditor> {
     final value = FundCostBaseAdjustment(
       parcelId: row['parcelId']!,
       amount: row['amount']!,
+      reducedAmount: _regime == 'NON_AMIT' ? row['reducedAmount'] : null,
       date: row['date']!,
       units: row['units'],
       evidenceReference: row['evidenceReference']!,
@@ -564,7 +573,6 @@ class _StatementEditorState extends State<_StatementEditor> {
   }
 
   Future<void> _drpLink([int? index]) async {
-    if (index == null && _drp.length >= 4) return;
     final row = await _rowDialog('Link existing DRP acquisition', const {
       'buyTransactionId': 'Existing reviewed BUY transaction ID',
       'cashEntitlement': 'Cash entitlement (AUD)',
@@ -680,7 +688,7 @@ class _StatementEditorState extends State<_StatementEditor> {
                 decoration: const InputDecoration(labelText: 'Fund regime'),
                 items: const [
                   DropdownMenuItem(value: 'AMIT', child: Text('AMIT')),
-                  DropdownMenuItem(value: 'non-AMIT', child: Text('Non-AMIT')),
+                  DropdownMenuItem(value: 'NON_AMIT', child: Text('Non-AMIT')),
                 ],
                 onChanged: _saving
                     ? null
@@ -689,9 +697,9 @@ class _StatementEditorState extends State<_StatementEditor> {
                         _reviewed = false;
                       }),
               ),
-              if (_regime == 'non-AMIT')
+              if (_regime == 'NON_AMIT')
                 const Text(
-                  'Non-AMIT cost-base adjustments require tax review. Do not use AMIT shortfall/excess fields for non-AMIT payments.',
+                  'Record evidenced tax-deferred and tax-free payments separately. Tax-deferred amounts reduce both bases; tax-free amounts reduce the reduced basis. Tax-exempt amounts do not reduce either basis.',
                 ),
               const SizedBox(height: 16),
               const Text(
@@ -703,6 +711,9 @@ class _StatementEditorState extends State<_StatementEditor> {
               ),
               for (final key in ManagedFundStatement.componentKeys)
                 _field(key, _labels[key] ?? key),
+              if (_regime == 'NON_AMIT')
+                for (final key in ManagedFundStatement.nonAmitComponentKeys)
+                  _field(key, key),
               ExpansionTile(
                 key: const Key('fund-transaction-references'),
                 title: const Text('Existing reviewed transaction references'),
@@ -736,7 +747,7 @@ class _StatementEditorState extends State<_StatementEditor> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const Text(
-                'Up to four adjustment rows per statement. Allocate the issuer adjustment to evidenced interests. Apply just before 30 June, or immediately before the relevant disposal. The received date is not the effective date.',
+                'Allocate the issuer adjustment to evidenced interests. Apply just before 30 June, or immediately before the relevant disposal. The received date is not the effective date.',
               ),
               for (var i = 0; i < _adjustments.length; i++)
                 ListTile(
@@ -758,9 +769,7 @@ class _StatementEditorState extends State<_StatementEditor> {
                 ),
               OutlinedButton(
                 key: const Key('add-fund-adjustment'),
-                onPressed: _saving || _adjustments.length >= 4
-                    ? null
-                    : _adjustment,
+                onPressed: _saving ? null : _adjustment,
                 child: const Text('Add parcel adjustment'),
               ),
               const SizedBox(height: 16),
@@ -769,7 +778,7 @@ class _StatementEditorState extends State<_StatementEditor> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const Text(
-                'Up to four DRP links per statement. Record the DRP acquisition through the investment transaction flow first. Link that existing BUY once here so broker imports do not create a second parcel.',
+                'Record the DRP acquisition through the investment transaction flow first. Link that existing BUY once here so broker imports do not create a second parcel.',
               ),
               for (var i = 0; i < _drp.length; i++)
                 ListTile(
@@ -789,7 +798,7 @@ class _StatementEditorState extends State<_StatementEditor> {
                 ),
               OutlinedButton(
                 key: const Key('add-fund-drp'),
-                onPressed: _saving || _drp.length >= 4 ? null : _drpLink,
+                onPressed: _saving ? null : _drpLink,
                 child: const Text('Link existing DRP BUY'),
               ),
               CheckboxListTile(

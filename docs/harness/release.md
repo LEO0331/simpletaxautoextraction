@@ -21,6 +21,8 @@ flutter test
 flutter build web --release --base-href /simpletaxautoextraction/
 ```
 
+CI also runs genuine Firestore rules checks and a real headless browser against local Auth/Firestore emulators. The deployment workflow calls CI for the same commit and waits for all jobs. See [release verification](../product/RELEASE_VERIFICATION.md) for the demo-only browser command and production boundaries.
+
 Then follow:
 
 ```text

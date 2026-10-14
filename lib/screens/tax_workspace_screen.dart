@@ -1,3 +1,6 @@
+import '../models/i1_adviser_decision.dart';
+import '../services/tax_rule_registry.dart';
+import '../services/accountant_workpaper_export.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -650,12 +653,6 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
   Future<void> _residency({int? index}) async {
     final workspace = _workspace;
     if (!_editable || workspace == null) return;
-    if (index == null && workspace.residencyPeriods.length >= 4) {
-      _message(
-        'At most four periods are supported. Larger histories need separate review.',
-      );
-      return;
-    }
     final existing = index == null ? null : workspace.residencyPeriods[index];
     final start = TextEditingController(
       text: existing?.start ?? '$_year-07-01',
@@ -773,10 +770,6 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
   Future<void> _i1({int? index}) async {
     final workspace = _workspace;
     if (!_editable || workspace == null) return;
-    if (index == null && workspace.i1Reviews.length >= 4) {
-      _message('At most four I1 reviews are supported.');
-      return;
-    }
     final existing = index == null ? null : workspace.i1Reviews[index];
     final values = <String, TextEditingController>{
       'date': TextEditingController(
@@ -795,6 +788,28 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
         text: existing?.adviserReference ?? '',
       ),
     };
+    final decisionValues = <String, TextEditingController>{
+      'decisionReference': TextEditingController(
+        text: existing?.adviserDecision?.decisionReference ?? '',
+      ),
+      'coveredAssets': TextEditingController(
+        text: existing?.adviserDecision?.coveredAssets.join('\n') ?? '',
+      ),
+      'scopeEvidence': TextEditingController(
+        text: existing?.adviserDecision?.scopeEvidence ?? '',
+      ),
+      'annualWorksheetReference': TextEditingController(
+        text: existing?.adviserDecision?.annualWorksheetReference ?? '',
+      ),
+      'gain': TextEditingController(
+        text: existing?.adviserDecision?.gain ?? '0',
+      ),
+      'loss': TextEditingController(
+        text: existing?.adviserDecision?.loss ?? '0',
+      ),
+    };
+    var includeDecision = existing?.adviserDecision != null;
+    var discountFraction = existing?.adviserDecision?.discountFraction ?? '0';
     var classification = existing?.classification ?? 'unknown';
     var election = existing?.election ?? 'undecided';
     var reviewed = existing?.reviewed ?? false;
@@ -811,7 +826,7 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    'Record an evidenced ceasing-residency event, asset exceptions and valuation. Deferral is an event-wide choice for all eligible assets; this form records review evidence and does not apply an election or I1 gain to the return.',
+                    'Record an evidenced ceasing-residency event, asset exceptions and valuation. Deferral covers all eligible assets at the event. Include a documented adviser decision only after confirming its complete asset scope and annual CGT treatment.',
                   ),
                   for (final entry in values.entries)
                     TextField(
@@ -864,6 +879,60 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                     }),
                   ),
                   CheckboxListTile(
+                    value: includeDecision,
+                    title: const Text('Include documented adviser decision'),
+                    onChanged: (v) => update(() {
+                      includeDecision = v!;
+                      reviewed = false;
+                    }),
+                  ),
+                  if (includeDecision) ...[
+                    const Text(
+                      'Enter assessed amounts before losses and the discount. Covered assets must list every eligible asset at this event, one reference per line. The annual worksheet must include this decision exactly once.',
+                    ),
+                    for (final entry in decisionValues.entries)
+                      TextField(
+                        controller: entry.value,
+                        maxLength: entry.key == 'coveredAssets' ? null : 1000,
+                        maxLines:
+                            entry.key == 'coveredAssets' ||
+                                entry.key == 'scopeEvidence'
+                            ? 3
+                            : 1,
+                        onChanged: (_) => update(() => reviewed = false),
+                        decoration: InputDecoration(
+                          labelText: switch (entry.key) {
+                            'gain' =>
+                              'Adviser assessed gain AUD (before discount)',
+                            'loss' => 'Adviser assessed loss AUD',
+                            'coveredAssets' =>
+                              'All covered eligible asset references',
+                            _ => _label(entry.key),
+                          },
+                        ),
+                      ),
+                    DropdownButtonFormField<String>(
+                      initialValue: discountFraction,
+                      decoration: const InputDecoration(
+                        labelText: 'Adviser assessed discount',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: '0',
+                          child: Text('No discount'),
+                        ),
+                        DropdownMenuItem(
+                          value: '0.5',
+                          child: Text('50% discount'),
+                        ),
+                      ],
+                      onChanged: (v) => update(() {
+                        discountFraction = v!;
+                        reviewed = false;
+                      }),
+                    ),
+                  ],
+                  CheckboxListTile(
                     value: reviewed,
                     title: const Text(
                       'Adviser reviewed event, valuation and election scope',
@@ -893,6 +962,26 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                   evidence: values['evidence']!.text.trim(),
                   adviserReference: values['adviserReference']!.text.trim(),
                   reviewed: reviewed,
+                  adviserDecision: includeDecision
+                      ? I1AdviserDecision.fromMap({
+                          'decisionReference':
+                              decisionValues['decisionReference']!.text.trim(),
+                          'coveredAssets': decisionValues['coveredAssets']!.text
+                              .split('\n')
+                              .map((v) => v.trim())
+                              .where((v) => v.isNotEmpty)
+                              .toList(),
+                          'scopeEvidence': decisionValues['scopeEvidence']!.text
+                              .trim(),
+                          'annualWorksheetReference':
+                              decisionValues['annualWorksheetReference']!.text
+                                  .trim(),
+                          'gain': decisionValues['gain']!.text.trim(),
+                          'loss': decisionValues['loss']!.text.trim(),
+                          'discountFraction': discountFraction,
+                          'ruleVersion': TaxRuleRegistry.version(_year),
+                        })
+                      : null,
                 );
                 final issues = value.validation();
                 if (issues.isNotEmpty) {
@@ -907,7 +996,7 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
         ),
       ),
     );
-    for (final controller in values.values) {
+    for (final controller in [...values.values, ...decisionValues.values]) {
       controller.dispose();
     }
     if (result != null && _editable) {
@@ -921,7 +1010,7 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
     }
   }
 
-  Future<void> _exportReport() async {
+  Future<void> _exportReport({String format = 'json'}) async {
     final bundle = _bundle;
     if (!_authorised || _stale || _report == null || bundle == null) return;
     if (_generation != await _store.getGeneration(_owner!) ||
@@ -936,10 +1025,22 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
       return;
     }
     if (!_authorised) return;
-    await saveTextFile(
-      'tax-workpaper-$_year-${_year + 1}.json',
-      _coordinator.exportWorksheet(bundle),
-    );
+    if (format == 'pdf') {
+      await saveBinaryFile(
+        'tax-workpaper-$_year-${_year + 1}.pdf',
+        AccountantWorkpaperExport().pdf(bundle),
+      );
+    } else if (format == 'csv') {
+      await saveTextFile(
+        'tax-workpaper-$_year-${_year + 1}.csv',
+        AccountantWorkpaperExport().csv(bundle),
+      );
+    } else {
+      await saveTextFile(
+        'tax-workpaper-$_year-${_year + 1}.json',
+        _coordinator.exportWorksheet(bundle),
+      );
+    }
   }
 
   Future<void> _exportBackup() async {
@@ -972,8 +1073,8 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
       if (!_authorised || selection == null) return;
       final file = selection.files.single;
       final bytes = file.bytes;
-      if (bytes == null || file.size > 5 * 1024 * 1024) {
-        _message('Choose a JSON backup smaller than 5 MB.');
+      if (bytes == null || file.size > 32 * 1024 * 1024) {
+        _message('Choose a JSON backup smaller than 32 MB.');
         return;
       }
       final year = await _coordinator.restoreBackup(
@@ -1073,7 +1174,7 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Financial year',
                   ),
-                  items: [2024, 2025]
+                  items: TaxRuleRegistry.supportedYearStarts
                       .map(
                         (y) => DropdownMenuItem(
                           value: y,
@@ -1357,6 +1458,21 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                             ? _exportReport
                             : null,
                         child: const Text('Export workpaper JSON'),
+                      ),
+                      for (final format in ['csv', 'pdf'])
+                        OutlinedButton(
+                          onPressed: _report != null && !_stale && !_busy
+                              ? () => _exportReport(format: format)
+                              : null,
+                          child: Text(
+                            'Export accountant ${format.toUpperCase()}',
+                          ),
+                        ),
+                      OutlinedButton(
+                        onPressed: !_busy
+                            ? () => Navigator.pushNamed(context, '/documents')
+                            : null,
+                        child: const Text('Document inventory'),
                       ),
                       OutlinedButton(
                         onPressed: !_stale && !_busy ? _exportBackup : null,

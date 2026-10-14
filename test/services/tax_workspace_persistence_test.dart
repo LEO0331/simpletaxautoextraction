@@ -182,23 +182,109 @@ void main() {
     },
   );
 
+  test('large archives are chunked and restored exactly', () async {
+    final config = await service.saveWorkspace(draft);
+    final large = report(2)
+      ..['sources'] = {'synthetic': List.filled(1100000, 'a').join()};
+    await service.saveWorkspace(
+      config.copyWith(status: 'finalised'),
+      finalSnapshot: large,
+      expectedWorkspaceGeneration: 1,
+      expectedInvestmentGeneration: 0,
+    );
+    expect(await service.getGeneration('owner'), 2);
+    final archive = (await service.getSnapshots('owner', 2024)).single;
+    expect(archive['payload'], large);
+    final raw =
+        (await db
+                .collection('users')
+                .doc('owner')
+                .collection('tax_years')
+                .doc('2024')
+                .collection('snapshots')
+                .doc('2')
+                .get())
+            .data()!;
+    expect(raw['schemaVersion'], 2);
+    expect(raw.containsKey('payload'), isFalse);
+  });
   test(
-    'oversized immutable archives fail before any workpaper mutation',
+    'more than four residency and I1 records survive revisions and amendment',
     () async {
-      final config = await service.saveWorkspace(draft);
-      final large = report(2)
-        ..['sources'] = {'synthetic': List.filled(900001, 'a').join()};
-      await expectLater(
-        service.saveWorkspace(
-          config.copyWith(status: 'finalised'),
-          finalSnapshot: large,
-          expectedWorkspaceGeneration: 1,
-          expectedInvestmentGeneration: 0,
-        ),
-        throwsFormatException,
+      final periods = [
+        for (var index = 0; index < 12; index++)
+          ResidencyPeriod(
+            start: '2024-07-01',
+            endExclusive: '2024-08-01',
+            classification: 'unknown',
+            evidence: 'Synthetic period $index',
+          ),
+      ];
+      final reviews = [
+        for (var index = 0; index < 12; index++)
+          I1Review(
+            date: '2024-08-01',
+            assetReference: 'Synthetic asset $index',
+          ),
+      ];
+      var saved = await service.saveWorkspace(
+        draft.copyWith(residencyPeriods: periods, i1Reviews: reviews),
       );
-      expect(await service.getGeneration('owner'), 1);
-      expect(await service.getSnapshots('owner', 2024), isEmpty);
+      expect((await service.getWorkspace('owner', 2024))!.i1Reviews.length, 12);
+      saved = await service.saveWorkspace(
+        saved.copyWith(status: 'finalised'),
+        finalSnapshot: report(2),
+        expectedWorkspaceGeneration: 1,
+        expectedInvestmentGeneration: 0,
+      );
+      final amended = await service.amendWorkspace(
+        'owner',
+        2024,
+        saved.revision,
+        'Synthetic correction',
+      );
+      expect(amended.residencyPeriods.length, 12);
+      expect((await service.getWorkspace('owner', 2024))!.i1Reviews.length, 12);
+      final history = await service.getAuditHistory('owner', 2024);
+      expect((history['workspaceRevisions'] as List).length, 3);
+      expect(
+        (history['workspaceRevisions'] as List).every(
+          (r) => (r['residencyPeriods'] as List).length == 12,
+        ),
+        isTrue,
+      );
+    },
+  );
+  test(
+    'incomplete workspace details cannot silently drop reviewed history',
+    () async {
+      await service.saveWorkspace(
+        draft.copyWith(
+          residencyPeriods: [
+            const ResidencyPeriod(
+              start: '2024-07-01',
+              endExclusive: '2025-07-01',
+              classification: 'resident',
+              evidence: 'Synthetic evidence',
+              reviewed: true,
+            ),
+          ],
+        ),
+      );
+      final user = db.collection('users').doc('owner');
+      final raw = (await user.collection('tax_years').doc('2024').get())
+          .data()!;
+      await user
+          .collection('revision_details')
+          .doc(raw['detailSetId'] as String)
+          .collection('records')
+          .doc('0')
+          .delete();
+      await expectLater(service.getWorkspace('owner', 2024), throwsStateError);
+      await expectLater(
+        service.getAuditHistory('owner', 2024),
+        throwsStateError,
+      );
     },
   );
 }

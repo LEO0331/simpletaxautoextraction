@@ -15,6 +15,11 @@ import 'screens/managed_fund_statement_screen.dart';
 import 'screens/tax_workspace_screen.dart';
 import 'screens/investment_transaction_list_screen.dart';
 import 'screens/investment_transaction_upload_screen.dart';
+import 'screens/document_coverage_screen.dart';
+import 'screens/account_backup_screen.dart';
+import 'screens/broker_csv_import_screen.dart';
+import 'screens/drp_advice_screen.dart';
+import 'screens/investment_special_cases_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -65,6 +70,11 @@ class MyApp extends StatelessWidget {
         InvestmentCgtRoutes.ledger: (_) => const InvestmentLedgerScreen(),
         InvestmentCgtRoutes.funds: (_) => const ManagedFundStatementScreen(),
         '/tax-years': (_) => const TaxWorkspaceScreen(),
+        '/documents': (_) => const DocumentCoverageScreen(),
+        '/account-backup': (_) => const AccountBackupScreen(),
+        '/investment-cgt/import-csv': (_) => const BrokerCsvImportScreen(),
+        '/investment-cgt/drp-advice': (_) => const DrpAdviceScreen(),
+        '/investment-cgt/special-cases': (_) => const InvestmentSpecialCasesScreen(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == InvestmentCgtRoutes.results) {

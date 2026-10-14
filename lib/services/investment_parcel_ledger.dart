@@ -1,3 +1,4 @@
+import '../models/corporate_action_decision.dart';
 import '../models/investment_ledger_fact.dart';
 import '../models/investment_ledger.dart';
 import '../models/tax_decimal.dart';
@@ -9,6 +10,7 @@ class InvestmentParcelLedger {
     required List<InvestmentLedgerFact> transactions,
     required List<SaleAllocation> allocations,
     List<ManagedFundStatement> statements = const [],
+    List<CorporateActionDecision> corporateActions = const [],
     DateTime? asOfDate,
     bool reviewedFacts = true,
   }) {
@@ -127,6 +129,34 @@ class InvestmentParcelLedger {
     if (statementSnapshots.map((s) => s['userId']).toSet().length > 1) {
       issues.add('Statements must belong to one user');
     }
+    final actionSnapshots = <Map<String, dynamic>>[];
+    final pendingActions = <CorporateActionDecision>[];
+    final seenActions = <String>{};
+    for (final action in corporateActions.where((a) => !a.isVoided)) {
+      final errors = action.validation();
+      if (errors.isNotEmpty ||
+          !seenActions.add(action.id) ||
+          owners.any((owner) => owner != action.userId) ||
+          statementOwners.any((owner) => owner != action.userId)) {
+        issues.add(
+          '${action.id}: Review split/consolidation identity, ownership and evidence',
+        );
+        continue;
+      }
+      final date = parseFundDate(action.date);
+      if (asOfDate != null &&
+          date.isAfter(
+            DateTime.utc(asOfDate.year, asOfDate.month, asOfDate.day),
+          )) {
+        continue;
+      }
+      pendingActions.add(action);
+      actionSnapshots.add({'id': action.id, ...action.toMap()});
+    }
+    pendingActions.sort((a, b) {
+      final date = a.date.compareTo(b.date);
+      return date != 0 ? date : a.id.compareTo(b.id);
+    });
     final pendingYearEnd =
         <MapEntry<ManagedFundStatement, FundCostBaseAdjustment>>[
           for (final statement in validStatements)
@@ -141,6 +171,9 @@ class InvestmentParcelLedger {
       TaxDecimal reduced,
       TaxDecimal amount,
     ) {
+      final reducedAmount = TaxDecimal.parse(
+        adjustment.reducedAmount ?? adjustment.amount,
+      );
       final adjusted = basis + amount;
       final excess = adjusted.isNegative
           ? TaxDecimal.zero - adjusted
@@ -154,9 +187,12 @@ class InvestmentParcelLedger {
             .toString(),
         'openingReducedCostBase': reduced.toString(),
         'closingReducedCostBase':
-            ((reduced + amount).isNegative ? TaxDecimal.zero : reduced + amount)
+            ((reduced + reducedAmount).isNegative
+                    ? TaxDecimal.zero
+                    : reduced + reducedAmount)
                 .toString(),
-        'e10Gain': excess.toString(),
+        if (statement.regime == 'NON_AMIT') 'e4Gain': excess.toString(),
+        if (statement.regime == 'AMIT') 'e10Gain': excess.toString(),
       });
       if (!excess.isZero) {
         final date = parseFundDate(adjustment.date);
@@ -169,7 +205,7 @@ class InvestmentParcelLedger {
           FundCapitalGainEvent(
             statementId: statement.id!,
             reference: adjustment.parcelId,
-            kind: 'E10',
+            kind: statement.regime == 'NON_AMIT' ? 'E4' : 'E10',
             date: date,
             gain: excess,
             discountEligible: date.isAfter(anniversary),
@@ -180,7 +216,75 @@ class InvestmentParcelLedger {
     }
 
     void applyYearEnd(DateTime? before) {
-      while (pendingYearEnd.isNotEmpty) {
+      while (pendingYearEnd.isNotEmpty || pendingActions.isNotEmpty) {
+        if (pendingActions.isNotEmpty &&
+            (pendingYearEnd.isEmpty ||
+                pendingActions.first.date.compareTo(
+                      pendingYearEnd.first.value.date,
+                    ) <=
+                    0)) {
+          final action = pendingActions.first;
+          final date = parseFundDate(action.date);
+          if (before != null && !date.isBefore(before)) break;
+          final parcel = parcels[action.parcelId];
+          pendingActions.removeAt(0);
+          final sameDayFact = transactions.any(
+            (t) =>
+                (t.id == action.parcelId ||
+                    allocations.any(
+                      (a) =>
+                          a.sellTransactionId == t.id &&
+                          a.selections.any(
+                            (s) => s.buyTransactionId == action.parcelId,
+                          ),
+                    )) &&
+                DateTime.utc(
+                      t.tradeDate.year,
+                      t.tradeDate.month,
+                      t.tradeDate.day,
+                    ) ==
+                    date &&
+                !t.isVoided,
+          );
+          if (parcel == null ||
+              parcel.remainingUnits != TaxDecimal.parse(action.oldUnits) ||
+              !date.isAfter(parcel.acquisitionDate) ||
+              sameDayFact) {
+            issues.add(
+              '${action.id}: Split interest or same-day ordering requires review',
+            );
+            continue;
+          }
+          final newUnits = TaxDecimal.parse(action.newUnits);
+          parcels[action.parcelId] = InvestmentParcel(
+            buyTransactionId: parcel.buyTransactionId,
+            ticker: parcel.ticker,
+            accountNumber: parcel.accountNumber,
+            acquisitionDate: parcel.acquisitionDate,
+            originalUnits: parcel.originalUnits,
+            remainingUnits: newUnits,
+            originalCostBase: parcel.originalCostBase,
+            remainingCostBase: parcel.remainingCostBase,
+            remainingReducedCostBase: parcel.remainingReducedCostBase,
+          );
+          history.add({
+            'corporateActionId': action.id,
+            'revision': action.revision,
+            'kind': 'split',
+            'date': action.date,
+            'parcelId': action.parcelId,
+            'oldUnits': action.oldUnits,
+            'newUnits': action.newUnits,
+            'evidenceReference': action.evidenceReference,
+            'openingCostBase': parcel.remainingCostBase.toString(),
+            'closingCostBase': parcel.remainingCostBase.toString(),
+            'openingReducedCostBase': parcel.remainingReducedCostBase
+                .toString(),
+            'closingReducedCostBase': parcel.remainingReducedCostBase
+                .toString(),
+          });
+          continue;
+        }
         final entry = pendingYearEnd.first,
             a = entry.value,
             statement = entry.key;
@@ -206,7 +310,9 @@ class InvestmentParcelLedger {
         }
         final amount = TaxDecimal.parse(a.amount),
             basis = parcel.remainingCostBase + amount,
-            reduced = parcel.remainingReducedCostBase + amount;
+            reduced =
+                parcel.remainingReducedCostBase +
+                TaxDecimal.parse(a.reducedAmount ?? a.amount);
         recordAdjustment(
           statement,
           a,
@@ -366,11 +472,6 @@ class InvestmentParcelLedger {
           );
         }
         final allocation = matches.single;
-        if (allocation.selections.length > 4) {
-          throw const FormatException(
-            'Phase 1 supports at most four parcels per sale',
-          );
-        }
         snapshots.last['allocation'] = allocation.toMap();
         if (allocation.transactionRevisions[id] != t.revision) {
           throw FormatException('Sale allocation revision is stale');
@@ -451,7 +552,9 @@ class InvestmentParcelLedger {
               final amount = TaxDecimal.parse(adjustment.amount);
               final openingBasis = basis, openingReduced = reduced;
               basis += amount;
-              reduced += amount;
+              reduced += TaxDecimal.parse(
+                adjustment.reducedAmount ?? adjustment.amount,
+              );
               if (basis.isNegative) basis = TaxDecimal.zero;
               if (reduced.isNegative) reduced = TaxDecimal.zero;
               stagedAdjustments.add(
@@ -557,6 +660,7 @@ class InvestmentParcelLedger {
     }
     return InvestmentLedgerResult(
       statementsSnapshot: statementSnapshots,
+      corporateActionsSnapshot: actionSnapshots,
       fundGains: fundGains,
       costBaseHistory: history,
       parcels: List.unmodifiable(parcels.values),

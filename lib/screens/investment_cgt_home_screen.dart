@@ -44,6 +44,21 @@ class InvestmentCgtHomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 _ActionCard(
+                  title: 'Review broker CSV imports',
+                  onTap: () => Navigator.pushNamed(context, '/investment-cgt/import-csv'),
+                ),
+                const SizedBox(height: 12),
+                _ActionCard(
+                  title: 'Review local DRP advice',
+                  onTap: () => Navigator.pushNamed(context, '/investment-cgt/drp-advice'),
+                ),
+                const SizedBox(height: 12),
+                _ActionCard(
+                  title: 'Splits, currency conversions and special cases',
+                  onTap: () => Navigator.pushNamed(context, '/investment-cgt/special-cases'),
+                ),
+                const SizedBox(height: 12),
+                _ActionCard(
                   title: 'Realised CGT and parcel ledger',
                   onTap: () =>
                       Navigator.pushNamed(context, InvestmentCgtRoutes.ledger),

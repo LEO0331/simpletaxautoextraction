@@ -168,6 +168,7 @@ class RealisedDisposal {
 }
 
 class InvestmentLedgerResult {
+  final List<Map<String, dynamic>> corporateActionsSnapshot;
   final List<Map<String, dynamic>> statementsSnapshot;
   final List<FundCapitalGainEvent> fundGains;
   final List<Map<String, dynamic>> costBaseHistory;
@@ -183,7 +184,11 @@ class InvestmentLedgerResult {
     List<Map<String, dynamic>> statementsSnapshot = const [],
     List<FundCapitalGainEvent> fundGains = const [],
     List<Map<String, dynamic>> costBaseHistory = const [],
-  }) : parcels = List.unmodifiable(parcels),
+    List<Map<String, dynamic>> corporateActionsSnapshot = const [],
+  }) : corporateActionsSnapshot = List.unmodifiable(
+         corporateActionsSnapshot.map(freezeTaxSnapshot),
+       ),
+       parcels = List.unmodifiable(parcels),
        statementsSnapshot = List.unmodifiable(
          statementsSnapshot.map(freezeTaxSnapshot),
        ),
@@ -197,6 +202,11 @@ class InvestmentLedgerResult {
   bool get needsReview => issues.isNotEmpty;
   Map<String, dynamic> toMap() => {
     'calculationVersion': 'parcel-v2',
+    'corporateActionsSnapshot': corporateActionsSnapshot,
+    'corporateActionRevisions': {
+      for (final action in corporateActionsSnapshot)
+        action['id']: action['revision'],
+    },
     'statementsSnapshot': statementsSnapshot,
     'statementRevisions': {
       for (final s in statementsSnapshot)

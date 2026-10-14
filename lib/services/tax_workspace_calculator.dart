@@ -3,6 +3,7 @@ import '../models/managed_fund_statement.dart';
 import '../models/tax_decimal.dart';
 import '../models/tax_record.dart';
 import '../models/tax_workspace.dart';
+import 'tax_rule_registry.dart';
 
 class TaxWorkspaceReport {
   final Map<String, String> categoryTotals;
@@ -60,7 +61,7 @@ class TaxWorkspaceCalculator {
   }) {
     final totals = {for (final k in taxWorkspaceTotals) k: TaxDecimal.zero};
     final issues = <String>[...workspace.validation()];
-    if (![2024, 2025].contains(workspace.yearStart)) {
+    if (!TaxRuleRegistry.supports(workspace.yearStart)) {
       issues.add('Unsupported financial-year rule set requires tax review');
     }
     final sections = <String, List<String>>{
@@ -400,11 +401,25 @@ class TaxWorkspaceCalculator {
             .toString(),
         'capitalLoss': (market < reduced ? reduced - market : TaxDecimal.zero)
             .toString(),
-        'includedInAnnualCgt': false,
+        'includedInAnnualCgt':
+            i.adviserDecision != null &&
+            (((cgtSnapshot?['snapshot'] as Map?)?['i1Reviews'] as List?) ?? [])
+                .any(
+                  (review) =>
+                      review is Map &&
+                      canonicalTaxFingerprint(
+                            Map<String, dynamic>.from(review),
+                          ) ==
+                          canonicalTaxFingerprint(i.toMap()),
+                ),
+        if (i.adviserDecision != null)
+          'adviserDecision': i.adviserDecision!.toMap(),
       });
-      issues.add(
-        'I1 transition requires adviser review of all eligible assets and election effects; scenario is excluded from annual totals',
-      );
+      if (scenarios.last['includedInAnnualCgt'] != true) {
+        issues.add(
+          'I1 transition requires adviser review of all eligible assets and election effects; scenario is excluded from annual totals',
+        );
+      }
     }
     if (elections.values.any(
       (v) => v.contains('recognise') && v.contains('deferAllEligible'),

@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/tax_workspace.dart';
+import 'revision_detail_store.dart';
+import '../models/document_coverage.dart';
+import 'document_coverage_service.dart';
 
 /// Versioned, owner-scoped workpapers. PDF bytes never enter this service.
 class TaxWorkspaceService {
@@ -16,6 +19,9 @@ class TaxWorkspaceService {
       _user(uid).collection('tax_years').doc('$year');
   DocumentReference<Map<String, dynamic>> _metadata(String uid) =>
       _user(uid).collection('tax_workspace_metadata').doc('current');
+  Future<List<DocumentCoverage>> getDocumentCoverage(String uid, int year) =>
+      DocumentCoverageService(db: _db).getCoverage(uid, year);
+
   Future<int> getGeneration(String uid) async =>
       ((await _metadata(uid).get()).data()?['generation'] as int?) ?? 0;
   Stream<int> watchGeneration(String uid) => _metadata(
@@ -23,13 +29,55 @@ class TaxWorkspaceService {
   ).snapshots().map((v) => v.data()?['generation'] as int? ?? 0);
   Future<TaxWorkspace?> getWorkspace(String uid, int year) async {
     final value = await _year(uid, year).get();
-    return value.exists ? TaxWorkspace.fromMap(value.data()!) : null;
+    return value.exists
+        ? TaxWorkspace.fromMap(await _hydrateWorkspace(uid, value.data()!))
+        : null;
   }
 
-  Future<List<TaxWorkspace>> getWorkspaces(String uid) async =>
-      (await _user(uid).collection('tax_years').get()).docs
-          .map((doc) => TaxWorkspace.fromMap(doc.data()))
-          .toList();
+  Future<List<TaxWorkspace>> getWorkspaces(String uid) async => Future.wait(
+    (await _user(uid).collection('tax_years').get()).docs.map(
+      (doc) async =>
+          TaxWorkspace.fromMap(await _hydrateWorkspace(uid, doc.data())),
+    ),
+  );
+
+  Future<Map<String, dynamic>> _hydrateWorkspace(
+    String uid,
+    Map<String, dynamic> header,
+  ) async {
+    if (header['schemaVersion'] != 2) return header;
+    final records = await RevisionDetailStore(
+      db: _db,
+    ).read(uid, header, family: 'workspace');
+    return {
+        ...header,
+        'schemaVersion': 1,
+        'residencyPeriods': records
+            .where((r) => r['kind'] == 'residency')
+            .map((r) => r['payload'])
+            .toList(),
+        'i1Reviews': records
+            .where((r) => r['kind'] == 'i1')
+            .map((r) => r['payload'])
+            .toList(),
+      }
+      ..remove('detailSetId')
+      ..remove('detailCount')
+      ..remove('detailHash');
+  }
+
+  Future<Map<String, dynamic>> _hydrateSnapshot(
+    String uid,
+    Map<String, dynamic> header,
+  ) async {
+    if (header['schemaVersion'] != 2) return header;
+    final payload = await RevisionDetailStore(db: _db).readArchive(uid, header);
+    return {...header, 'schemaVersion': 1, 'payload': payload}
+      ..remove('detailSetId')
+      ..remove('detailCount')
+      ..remove('detailHash')
+      ..remove('payloadHeader');
+  }
 
   Future<List<TaxWorkspaceItem>> getItems(String uid, int year) async =>
       (await _year(uid, year).collection('items').get()).docs
@@ -52,9 +100,14 @@ class TaxWorkspaceService {
       }),
     );
     return {
-      'workspaceRevisions': revisions.docs
-          .map((version) => {'id': version.id, ...version.data()})
-          .toList(),
+      'workspaceRevisions': await Future.wait(
+        revisions.docs.map(
+          (version) async => {
+            'id': version.id,
+            ...await _hydrateWorkspace(uid, version.data()),
+          },
+        ),
+      ),
       'itemRevisions': Map.fromEntries(histories),
     };
   }
@@ -69,9 +122,11 @@ class TaxWorkspaceService {
       year,
     ).collection('snapshots').orderBy('createdAt', descending: true);
     if (!all) query = query.limit(20);
-    return (await query.get()).docs
-        .map((v) => {'id': v.id, ...v.data()})
-        .toList();
+    return Future.wait(
+      (await query.get()).docs.map(
+        (v) async => {'id': v.id, ...await _hydrateSnapshot(uid, v.data())},
+      ),
+    );
   }
 
   Future<TaxWorkspace> saveWorkspace(
@@ -98,18 +153,37 @@ class TaxWorkspaceService {
         'Finalisation requires a fresh reconciled report and source generations.',
       );
     }
-    // Copy before asynchronous work so callers cannot mutate the archived report.
-    if (finalSnapshot != null &&
-        utf8.encode(jsonEncode(finalSnapshot)).length > 900000) {
-      throw const FormatException(
-        'The workpaper exceeds the supported archive size.',
-      );
-    }
     final frozen = finalSnapshot == null
         ? null
         : jsonDecode(jsonEncode(finalSnapshot)) as Map<String, dynamic>;
     final ref = _year(workspace.userId, workspace.yearStart);
     final metadata = _metadata(workspace.userId);
+    final stagedGeneration = await getGeneration(workspace.userId);
+    final details = RevisionDetailStore(db: _db);
+    final workspaceDetails = await details.stage(
+      userId: workspace.userId,
+      family: 'workspace',
+      subjectId: '${workspace.yearStart}',
+      revision: workspace.revision + 1,
+      generation: stagedGeneration,
+      yearStart: workspace.yearStart,
+      records: [
+        for (final p in workspace.residencyPeriods)
+          {'kind': 'residency', 'payload': p.toMap()},
+        for (final i in workspace.i1Reviews)
+          {'kind': 'i1', 'payload': i.toMap()},
+      ],
+    );
+    final archiveDetails = frozen == null
+        ? null
+        : await details.stageArchive(
+            userId: workspace.userId,
+            subjectId: '${workspace.revision + 1}',
+            revision: workspace.revision + 1,
+            generation: stagedGeneration,
+            yearStart: workspace.yearStart,
+            payload: frozen,
+          );
     return _db.runTransaction((transaction) async {
       final current = await transaction.get(ref);
       final state = await transaction.get(metadata);
@@ -118,7 +192,8 @@ class TaxWorkspaceService {
       );
       final revision = current.data()?['revision'] as int? ?? 0;
       final generation = state.data()?['generation'] as int? ?? 0;
-      if (revision != workspace.revision ||
+      if (generation != stagedGeneration ||
+          revision != workspace.revision ||
           current.data()?['status'] == 'finalised') {
         throw StateError(
           'Workspace changed or is finalised. Reload or amend it.',
@@ -142,17 +217,33 @@ class TaxWorkspaceService {
           'Report source generations or fingerprint do not match.',
         );
       }
-      final data = {
+      await details.verify(transaction, workspaceDetails);
+      if (archiveDetails != null) {
+        await details.verify(transaction, archiveDetails);
+      }
+      final logicalData = {
         ...workspace.toMap(),
         'revision': revision + 1,
         'updatedAt': FieldValue.serverTimestamp(),
       };
+      final data = {
+        ...logicalData,
+        'schemaVersion': 2,
+        ...workspaceDetails.fields,
+        'revision': revision + 1,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      data.remove('residencyPeriods');
+      data.remove('i1Reviews');
+      details.publish(transaction, workspaceDetails);
+      if (archiveDetails != null) details.publish(transaction, archiveDetails);
       transaction.set(ref, data);
       transaction.set(ref.collection('revisions').doc('${revision + 1}'), data);
       transaction.set(metadata, {'generation': generation + 1});
       if (frozen != null) {
         transaction.set(ref.collection('snapshots').doc('${revision + 1}'), {
-          'schemaVersion': 1,
+          'schemaVersion': 2,
+          ...archiveDetails!.fields,
           'userId': workspace.userId,
           'yearStart': workspace.yearStart,
           'kind': 'finalised',
@@ -160,10 +251,21 @@ class TaxWorkspaceService {
           'workspaceGeneration': generation + 1,
           'investmentGeneration': expectedInvestmentGeneration,
           'createdAt': FieldValue.serverTimestamp(),
-          'payload': frozen,
+          'payloadHeader': {
+            'sourceFingerprint': frozen['sourceFingerprint'],
+            'report': {
+              for (final key in [
+                'canFinalise',
+                'workspaceGeneration',
+                'investmentGeneration',
+                'sourceFingerprint',
+              ])
+                key: frozen['report'][key],
+            },
+          },
         });
       }
-      return TaxWorkspace.fromMap(data);
+      return TaxWorkspace.fromMap(logicalData);
     });
   }
 
@@ -236,20 +338,48 @@ class TaxWorkspaceService {
     }
     final ref = _year(uid, year);
     final metadata = _metadata(uid);
+    final loaded = await getWorkspace(uid, year);
+    if (loaded == null ||
+        loaded.revision != expectedRevision ||
+        loaded.status != 'finalised') {
+      throw StateError('Reload the finalised workspace before amending.');
+    }
+    final generation = await getGeneration(uid);
+    final details = RevisionDetailStore(db: _db);
+    final staged = await details.stage(
+      userId: uid,
+      family: 'workspace',
+      subjectId: '$year',
+      revision: expectedRevision + 1,
+      generation: generation,
+      yearStart: year,
+      records: [
+        for (final p in loaded.residencyPeriods)
+          {'kind': 'residency', 'payload': p.toMap()},
+        for (final i in loaded.i1Reviews) {'kind': 'i1', 'payload': i.toMap()},
+      ],
+    );
     return _db.runTransaction((transaction) async {
       final current = await transaction.get(ref);
       final state = await transaction.get(metadata);
-      if (current.data()?['status'] != 'finalised' ||
+      if ((state.data()?['generation'] as int? ?? 0) != generation ||
+          current.data()?['status'] != 'finalised' ||
           current.data()?['revision'] != expectedRevision) {
         throw StateError('Reload the finalised workspace before amending.');
       }
+      await details.verify(transaction, staged);
       final data = {
         ...current.data()!,
+        'schemaVersion': 2,
+        ...staged.fields,
         'status': 'draft',
         'amendmentReason': reason.trim(),
         'revision': expectedRevision + 1,
         'updatedAt': FieldValue.serverTimestamp(),
       };
+      data.remove('residencyPeriods');
+      data.remove('i1Reviews');
+      details.publish(transaction, staged);
       transaction.set(ref, data);
       transaction.set(
         ref.collection('revisions').doc('${expectedRevision + 1}'),
@@ -258,7 +388,11 @@ class TaxWorkspaceService {
       transaction.set(metadata, {
         'generation': (state.data()?['generation'] as int? ?? 0) + 1,
       });
-      return TaxWorkspace.fromMap(data);
+      return loaded.copyWith(
+        status: 'draft',
+        amendmentReason: reason.trim(),
+        revision: expectedRevision + 1,
+      );
     });
   }
 
@@ -267,15 +401,19 @@ class TaxWorkspaceService {
     int year,
     Map<String, dynamic> archive,
   ) async {
-    if (utf8.encode(jsonEncode(archive)).length > 900000) {
-      throw const FormatException(
-        'The historical archive exceeds the supported size.',
-      );
-    }
     final payload = jsonDecode(jsonEncode(archive)) as Map<String, dynamic>;
     final identity = 'imported-${canonicalTaxFingerprint(payload)}';
     final ref = _year(uid, year);
     final snapshot = ref.collection('snapshots').doc(identity);
+    final details = RevisionDetailStore(db: _db);
+    final staged = await details.stageArchive(
+      userId: uid,
+      subjectId: identity,
+      revision: 0,
+      generation: await getGeneration(uid),
+      yearStart: year,
+      payload: payload,
+    );
     await _db.runTransaction((transaction) async {
       final workspace = await transaction.get(ref);
       final existing = await transaction.get(snapshot);
@@ -283,13 +421,16 @@ class TaxWorkspaceService {
         throw StateError('Historical imports require a draft workspace.');
       }
       if (!existing.exists) {
+        await details.verify(transaction, staged);
+        details.publish(transaction, staged);
         transaction.set(snapshot, {
-          'schemaVersion': 1,
+          'schemaVersion': 2,
+          ...staged.fields,
           'kind': 'imported',
           'userId': uid,
           'yearStart': year,
           'createdAt': FieldValue.serverTimestamp(),
-          'payload': payload,
+          'payloadHeader': {},
         });
       }
     });

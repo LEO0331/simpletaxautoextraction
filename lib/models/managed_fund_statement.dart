@@ -2,7 +2,7 @@ import 'tax_decimal.dart';
 
 class FundCostBaseAdjustment {
   final String parcelId, amount, date, evidenceReference;
-  final String? beforeSaleId, units;
+  final String? beforeSaleId, units, reducedAmount;
   const FundCostBaseAdjustment({
     required this.parcelId,
     required this.amount,
@@ -10,6 +10,7 @@ class FundCostBaseAdjustment {
     required this.evidenceReference,
     this.beforeSaleId,
     this.units,
+    this.reducedAmount,
   });
   Map<String, dynamic> toMap() => {
     'parcelId': parcelId,
@@ -18,6 +19,7 @@ class FundCostBaseAdjustment {
     'evidenceReference': evidenceReference,
     'beforeSaleId': beforeSaleId,
     'units': units,
+    if (reducedAmount != null) 'reducedAmount': reducedAmount,
   };
   factory FundCostBaseAdjustment.fromMap(Map<String, dynamic> m) =>
       FundCostBaseAdjustment(
@@ -27,6 +29,7 @@ class FundCostBaseAdjustment {
         evidenceReference: m['evidenceReference'] as String,
         beforeSaleId: m['beforeSaleId'] as String?,
         units: m['units'] as String?,
+        reducedAmount: m['reducedAmount'] as String?,
       );
 }
 
@@ -74,6 +77,8 @@ class ManagedFundStatement {
     'amitShortfall',
     'amitExcess',
   ];
+  static const nonAmitComponentKeys = ['taxDeferred', 'taxFree', 'taxExempt'];
+  static const allComponentKeys = [...componentKeys, ...nonAmitComponentKeys];
   final String? id;
   final String userId,
       ticker,
@@ -167,10 +172,8 @@ class ManagedFundStatement {
         'Statement identity, issuer, layout, year and source are required',
       );
     }
-    if (regime != 'AMIT') {
-      issues.add(
-        'Non-AMIT basis and non-assessable payments require tax review',
-      );
+    if (!['AMIT', 'NON_AMIT'].contains(regime)) {
+      issues.add('Unknown fund regime requires tax review');
     }
     try {
       if (isReviewed && componentKeys.any((k) => !components.containsKey(k))) {
@@ -178,10 +181,17 @@ class ManagedFundStatement {
           'Review requires every statement component, including explicit zeros',
         );
       }
-      if (components.keys.any((k) => !componentKeys.contains(k))) {
+      if (isReviewed &&
+          regime == 'NON_AMIT' &&
+          nonAmitComponentKeys.any((k) => !components.containsKey(k))) {
+        issues.add(
+          'Non-AMIT review requires explicit tax-deferred, tax-free and tax-exempt amounts',
+        );
+      }
+      if (components.keys.any((k) => !allComponentKeys.contains(k))) {
         throw const FormatException('Unknown statement component');
       }
-      for (final k in componentKeys) {
+      for (final k in allComponentKeys) {
         final v = component(k);
         if (v.isNegative || v != v.rounded()) {
           throw const FormatException(
@@ -201,15 +211,18 @@ class ManagedFundStatement {
         issues.add('Shortfall and excess cannot both be reported');
       }
       if (regime != 'AMIT' &&
-          (adjustments.isNotEmpty ||
-              !component('amitShortfall').isZero ||
+          (!component('amitShortfall').isZero ||
               !component('amitExcess').isZero)) {
         issues.add('Non-AMIT cost-base adjustments require tax review');
       }
-      var sum = TaxDecimal.zero;
-      if (adjustments.isNotEmpty &&
-          component('amitShortfall').isZero &&
-          component('amitExcess').isZero) {
+      var sum = TaxDecimal.zero, reducedSum = TaxDecimal.zero;
+      final expected = regime == 'NON_AMIT'
+          ? TaxDecimal.zero - component('taxDeferred')
+          : component('amitShortfall') - component('amitExcess');
+      final expectedReduced = regime == 'NON_AMIT'
+          ? expected - component('taxFree')
+          : expected;
+      if (adjustments.isNotEmpty && expected.isZero && expectedReduced.isZero) {
         issues.add(
           'A zero AMIT net amount cannot contain offsetting adjustment slices',
         );
@@ -217,9 +230,16 @@ class ManagedFundStatement {
       final scopes = <String>{};
       for (final a in adjustments) {
         final amount = TaxDecimal.parse(a.amount);
+        final reduced = TaxDecimal.parse(a.reducedAmount ?? a.amount);
         final date = parseFundDate(a.date);
-        if (amount.isZero ||
+        if ((amount.isZero && reduced.isZero) ||
             amount != amount.rounded() ||
+            reduced != reduced.rounded() ||
+            (regime == 'AMIT' && reduced != amount) ||
+            (regime == 'NON_AMIT' &&
+                (a.reducedAmount == null ||
+                    amount > TaxDecimal.zero ||
+                    reduced > amount)) ||
             a.parcelId.isEmpty ||
             a.evidenceReference.trim().isEmpty ||
             !scopes.add('${a.parcelId}|${a.beforeSaleId ?? a.date}')) {
@@ -246,10 +266,11 @@ class ManagedFundStatement {
           );
         }
         sum += amount;
+        reducedSum += reduced;
       }
-      if (sum != component('amitShortfall') - component('amitExcess')) {
+      if (sum != expected || reducedSum != expectedReduced) {
         issues.add(
-          'Parcel adjustments do not reconcile with AMIT shortfall/excess',
+          'Parcel adjustments do not reconcile with statement cost and reduced-cost amounts',
         );
       }
       final buys = <String>{};

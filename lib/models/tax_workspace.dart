@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../utils/source_fingerprint.dart';
 import 'tax_decimal.dart';
 import 'tax_record.dart';
+import 'i1_adviser_decision.dart';
 
 const taxWorkspaceSections = [
   'salary',
@@ -127,6 +128,7 @@ class ResidencyPeriod {
 }
 
 class I1Review {
+  final I1AdviserDecision? adviserDecision;
   final String date,
       assetReference,
       marketValue,
@@ -138,6 +140,7 @@ class I1Review {
       adviserReference;
   final bool reviewed;
   const I1Review({
+    this.adviserDecision,
     required this.date,
     required this.assetReference,
     this.marketValue = '0',
@@ -150,6 +153,7 @@ class I1Review {
     this.reviewed = false,
   });
   Map<String, dynamic> toMap() => {
+    if (adviserDecision != null) 'adviserDecision': adviserDecision!.toMap(),
     'date': date,
     'assetReference': assetReference,
     'marketValue': marketValue,
@@ -163,6 +167,7 @@ class I1Review {
   };
   factory I1Review.fromMap(Map<String, dynamic> m) {
     _workspaceKeys(m, {
+      'adviserDecision',
       'date',
       'assetReference',
       'marketValue',
@@ -175,6 +180,11 @@ class I1Review {
       'reviewed',
     });
     return I1Review(
+      adviserDecision: m['adviserDecision'] == null
+          ? null
+          : I1AdviserDecision.fromMap(
+              Map<String, dynamic>.from(m['adviserDecision'] as Map),
+            ),
       date: m['date'] as String,
       assetReference: m['assetReference'] as String,
       marketValue: m['marketValue'] as String,
@@ -188,7 +198,7 @@ class I1Review {
     );
   }
   List<String> validation() {
-    final issues = <String>[];
+    final issues = <String>[...?adviserDecision?.validation()];
     try {
       workspaceDate(date);
     } on FormatException catch (e) {
@@ -327,8 +337,6 @@ class TaxWorkspace {
         revision < 0 ||
         !['draft', 'finalised'].contains(status))
       'Invalid workspace identity or status',
-    if (residencyPeriods.length > 4 || i1Reviews.length > 4)
-      'At most four residency periods and four I1 reviews are supported; obtain review for larger histories',
     if (sectionStates.entries.any(
       (e) =>
           !taxWorkspaceSections.contains(e.key) ||

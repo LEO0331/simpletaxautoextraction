@@ -70,7 +70,7 @@ service cloud.firestore {
       return getAfter(/databases/$(database)/documents/users/$(userId)/investment_metadata/ledger).data.generation == ledgerGeneration(userId) + 1;
     }
 
-    function validAllocation(data, userId, saleId) {
+    function validLegacyAllocation(data, userId, saleId) {
       let sale = get(/databases/$(database)/documents/users/$(userId)/investment_transactions/$(saleId)).data;
       return data.keys().hasOnly(['sellTransactionId', 'selections', 'transactionRevisions', 'method', 'revision', 'userId', 'updatedAt'])
         && data.userId == userId && data.sellTransactionId == saleId
@@ -199,9 +199,10 @@ service cloud.firestore {
       return value is string && value.matches('^[0-9]{1,30}(\\.[0-9]{1,2})?$');
     }
     function validFundAdjustment(a) {
-      return a is map && a.keys().hasOnly(['parcelId', 'amount', 'date', 'evidenceReference', 'beforeSaleId', 'units'])
+      return a is map && a.keys().hasOnly(['parcelId', 'amount', 'reducedAmount', 'date', 'evidenceReference', 'beforeSaleId', 'units'])
         && validString(a.parcelId, 128) && validString(a.evidenceReference, 1000)
         && a.amount is string && a.amount.matches('^-?[0-9]{1,30}(\\.[0-9]{1,2})?$')
+        && (a.get('reducedAmount',null)==null || (a.reducedAmount is string && a.reducedAmount.matches('^-?[0-9]{1,30}(\\.[0-9]{1,2})?$')))
         && a.date is string && a.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && validOptionalString(a.get('beforeSaleId', null), 128)
         && (a.get('units', null) == null || (a.units is string && a.units.matches('^[0-9]{1,30}(\\.[0-9]{1,12})?$')));
@@ -211,7 +212,7 @@ service cloud.firestore {
         && validString(a.buyTransactionId, 128) && validString(a.evidenceReference, 1000)
         && fundMoney(a.cashEntitlement) && fundMoney(a.reinvestedAmount) && fundMoney(a.residualCash);
     }
-    function validFundStatement(d, userId) {
+    function validLegacyFundStatement(d, userId) {
       let components = d.components;
       // One anchored regex validates exactly eleven monetary strings. Embedded
       // delimiters, non-string values and malformed cents fail this expression.
@@ -331,7 +332,143 @@ service cloud.firestore {
         && data.revision is int && data.revision>0 && data.updatedAt is timestamp;
     }
 
+    function validDetailHeader(d,uid,family,subjectId,revision) {
+      let m=getAfter(/databases/$(database)/documents/users/$(uid)/revision_details/$(d.detailSetId)).data;
+      return d.detailSetId is string && d.detailSetId.matches('^[a-f0-9]{64}$')
+        && d.detailCount is int && d.detailCount>=0 && d.detailHash is string && d.detailHash.matches('^[a-f0-9]{64}$')
+        && m.userId==uid && m.family==family && m.subjectId==subjectId && m.revision==revision
+        && m.state=='published' && m.count==d.detailCount && m.hash==d.detailHash;
+    }
+    function validAllocation(d,uid,saleId) {
+      let sale=get(/databases/$(database)/documents/users/$(uid)/investment_transactions/$(saleId)).data;
+      return d.get('schemaVersion',0)==2 ? (
+        d.keys().hasOnly(['schemaVersion','detailSetId','detailCount','detailHash','sellTransactionId','method','userId','revision','updatedAt'])
+        && d.userId==uid && d.sellTransactionId==saleId && d.method=='specific' && d.revision is int && d.revision>0
+        && d.updatedAt is timestamp && sale.transactionType=='SELL' && sale.isReviewed && !sale.isLocked && !sale.get('isVoided',false)
+        && d.detailCount>0 && validDetailHeader(d,uid,'allocation',saleId,d.revision)
+      ) : validLegacyAllocation(d,uid,saleId);
+    }
+    function validFundComponents(c) {
+      let values=c.get('australianIncome','0')+'|'+c.get('foreignIncome','0')+'|'+c.get('frankingCredits','0')+'|'+c.get('foreignTaxOffset','0')+'|'+c.get('withholding','0')+'|'+c.get('cashDistributions','0')+'|'+c.get('discountedCapitalGain','0')+'|'+c.get('otherCapitalGain','0')+'|'+c.get('grossCapitalGain','0')+'|'+c.get('amitShortfall','0')+'|'+c.get('amitExcess','0')+'|'+c.get('taxDeferred','0')+'|'+c.get('taxFree','0')+'|'+c.get('taxExempt','0');
+      return c is map && c.keys().hasOnly(['australianIncome','foreignIncome','frankingCredits','foreignTaxOffset','withholding','cashDistributions','discountedCapitalGain','otherCapitalGain','grossCapitalGain','amitShortfall','amitExcess','taxDeferred','taxFree','taxExempt'])
+        && values.matches('^[0-9]{1,30}(\\.[0-9]{1,2})?(\\|[0-9]{1,30}(\\.[0-9]{1,2})?){13}$');
+    }
+    function validFundStatement(d,uid) {
+      return d.schemaVersion==2 ? (
+        d.keys().hasOnly(['schemaVersion','userId','ticker','accountNumber','issuer','layoutVersion','yearStart','sourceReference','regime','revision','isReviewed','isVoided','components','createdAt','updatedAt','detailSetId','detailCount','detailHash'])
+        && d.userId==uid && validString(d.ticker,16) && validString(d.accountNumber,64)
+        && validString(d.issuer,180) && validString(d.layoutVersion,64) && validString(d.sourceReference,1000)
+        && d.yearStart is int && d.yearStart>=1900 && d.yearStart<=2199 && d.regime in ['AMIT','non-AMIT']
+        && d.revision is int && d.revision>0 && d.isReviewed is bool && d.isVoided is bool
+        && d.createdAt is timestamp && d.updatedAt is timestamp && validFundComponents(d.components)
+        && validDetailHeader(d,uid,'fund',request.path[6],d.revision)
+      ) : validLegacyFundStatement(d,uid);
+    }
+    function validWorkspaceV2(d,uid,year) {
+      return d.keys().hasOnly(['schemaVersion','userId','yearStart','revision','status','amendmentReason','cgtSnapshotId','sectionStates','sectionEvidence','prefill','updatedAt','detailSetId','detailCount','detailHash'])
+        && d.schemaVersion==2 && d.userId==uid && d.yearStart is int && year==string(d.yearStart)
+        && d.yearStart>=1900 && d.yearStart<=2199 && d.revision is int && d.revision>0 && d.status in ['draft','finalised']
+        && d.amendmentReason is string && d.amendmentReason.size()<=1000 && d.cgtSnapshotId is string && d.cgtSnapshotId.size()<=1000
+        && d.updatedAt is timestamp && d.sectionStates is map && d.sectionStates.keys().hasOnly(['salary','interest','dividends','funds','rental','capitalGains','otherIncome','deductions','offsets'])
+        && d.sectionStates.values().hasOnly(['notStarted','documentsMissing','imported','needsReview','reconciled','notApplicable'])
+        && d.sectionEvidence is map && d.sectionEvidence.keys().hasOnly(['salary','interest','dividends','funds','rental','capitalGains','otherIncome','deductions','offsets'])
+        && workspaceEvidence(d.sectionEvidence,'salary') && workspaceEvidence(d.sectionEvidence,'interest') && workspaceEvidence(d.sectionEvidence,'dividends')
+        && workspaceEvidence(d.sectionEvidence,'funds') && workspaceEvidence(d.sectionEvidence,'rental') && workspaceEvidence(d.sectionEvidence,'capitalGains')
+        && workspaceEvidence(d.sectionEvidence,'otherIncome') && workspaceEvidence(d.sectionEvidence,'deductions') && workspaceEvidence(d.sectionEvidence,'offsets')
+        && d.prefill is map && d.prefill.keys().hasOnly(['salaryIncome','interestIncome','dividendIncome','fundAustralianIncome','fundForeignIncome','rentalIncome','rentalDeductions','rentalNet','netCapitalGain','otherIncome','deductions','frankingCredits','foreignTaxOffset','otherOffsets','withholding'])
+        && validWorkspacePrefill(d.prefill) && validDetailHeader(d,uid,'workspace',year,d.revision);
+    }
+    function validDetailMeta(m,uid) {
+      return m.keys().hasOnly(['schemaVersion','userId','family','subjectId','yearStart','revision','generation','ticker','accountNumber','saleRevision','reviewed','count','hash','state','createdAt'])
+        && m.schemaVersion==1 && m.userId==uid && m.family in ['allocation','fund','workspace','archive']
+        && m.subjectId is string && m.subjectId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && m.yearStart is int && (m.yearStart==0 || (m.yearStart>=1900 && m.yearStart<=2199))
+        && m.revision is int && m.revision>=0 && m.generation is int && m.generation>=0 && m.saleRevision is int && m.saleRevision>=0
+        && m.ticker is string && m.ticker.size()<=16 && m.accountNumber is string && m.accountNumber.size()<=64 && m.reviewed is bool
+        && m.count is int && m.count>=0 && m.hash is string && m.hash.matches('^[a-f0-9]{64}$') && m.createdAt is timestamp;
+    }
+    function detailTarget(m,uid,id) {
+      let allocation=getAfter(/databases/$(database)/documents/users/$(uid)/investment_allocations/$(m.subjectId)).data;
+      let fund=getAfter(/databases/$(database)/documents/users/$(uid)/managed_fund_statements/$(m.subjectId)).data;
+      let year=getAfter(/databases/$(database)/documents/users/$(uid)/tax_years/$(m.subjectId)).data;
+      let archive=getAfter(/databases/$(database)/documents/users/$(uid)/tax_years/$(string(m.yearStart))/snapshots/$(m.subjectId)).data;
+      return m.family=='allocation' ? (allocation.detailSetId==id && allocation.detailHash==m.hash && allocation.detailCount==m.count && allocation.revision==m.revision
+          && ledgerGeneration(uid)==m.generation && ledgerAdvanced(uid)) :
+        m.family=='fund' ? (fund.detailSetId==id && fund.detailHash==m.hash && fund.detailCount==m.count && fund.revision==m.revision
+          && fund.ticker==m.ticker && fund.accountNumber==m.accountNumber && fund.yearStart==m.yearStart && (fund.isReviewed && !fund.isVoided)==m.reviewed
+          && ledgerGeneration(uid)==m.generation && ledgerAdvanced(uid)) :
+        m.family=='workspace' ? (year.detailSetId==id && year.detailHash==m.hash && year.detailCount==m.count && year.revision==m.revision
+          && year.yearStart==m.yearStart && workspaceGeneration(uid)==m.generation && workspaceAdvanced(uid)) :
+        (archive.detailSetId==id && archive.detailHash==m.hash && archive.detailCount==m.count && archive.yearStart==m.yearStart
+          && (archive.kind=='imported' || (archive.workspaceRevision==m.revision && workspaceGeneration(uid)==m.generation && workspaceAdvanced(uid))));
+    }
+    function validPositiveUnits(v) { return v is string && v.size()<=100 && v.matches('^[0-9]+(\\.[0-9]{1,12})?$') && v.matches('.*[1-9].*'); }
+    function validAllocationDetail(p,m,uid) {
+      let buy=get(/databases/$(database)/documents/users/$(uid)/investment_transactions/$(p.buyTransactionId)).data;
+      let sale=get(/databases/$(database)/documents/users/$(uid)/investment_transactions/$(m.subjectId)).data;
+      return p.keys().hasOnly(['buyTransactionId','units','buyRevision','saleRevision']) && validString(p.buyTransactionId,128) && validPositiveUnits(p.units)
+        && p.buyRevision is int && p.saleRevision is int && p.saleRevision==m.saleRevision
+        && buy.transactionType=='BUY' && buy.isReviewed && !buy.get('isVoided',false) && buy.get('revision',0)==p.buyRevision
+        && sale.transactionType=='SELL' && sale.isReviewed && !sale.isLocked && !sale.get('isVoided',false) && sale.get('revision',0)==p.saleRevision
+        && buy.ticker==m.ticker && sale.ticker==m.ticker && buy.accountNumber==m.accountNumber && sale.accountNumber==m.accountNumber
+        && buy.tradeDate<sale.tradeDate && ledgerGeneration(uid)==m.generation;
+    }
+    function validFundReference(p,m,uid,kind) {
+      let buyId=kind=='fundDrp' ? p.buyTransactionId : p.parcelId;
+      let buy=get(/databases/$(database)/documents/users/$(uid)/investment_transactions/$(buyId)).data;
+      return buy.transactionType=='BUY' && buy.isReviewed && !buy.get('isVoided',false) && buy.ticker==m.ticker && buy.accountNumber==m.accountNumber;
+    }
+    function validI1Decision(d) {
+      return d is map && d.keys().hasOnly(['decisionReference','coveredAssets','scopeEvidence','gain','loss','discountFraction','ruleVersion'])
+        && validString(d.decisionReference,1000) && d.coveredAssets is list && d.coveredAssets.size()>0 && validString(d.scopeEvidence,1000)
+        && workspaceMoney(d.gain) && workspaceMoney(d.loss) && d.discountFraction in ['0','0.5'] && validString(d.ruleVersion,1000);
+    }
+    function validI1Detail(p) {
+      return p is map && p.keys().hasOnly(['date','assetReference','marketValue','costBase','reducedCostBase','classification','election','evidence','adviserReference','reviewed','adviserDecision'])
+        && validString(p.assetReference,1000) && p.date is string && p.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && workspaceMoney(p.marketValue) && workspaceMoney(p.costBase) && workspaceMoney(p.reducedCostBase)
+        && p.classification in ['unknown','nonTAP','tapExcluded','preCGT','temporaryResident'] && p.election in ['undecided','recognise','deferAllEligible']
+        && p.reviewed is bool && p.evidence is string && p.evidence.size()<=1000 && p.adviserReference is string && p.adviserReference.size()<=1000
+        && (!p.reviewed || (p.evidence.size()>0 && p.adviserReference.size()>0))
+        && (p.get('adviserDecision',null)==null || validI1Decision(p.adviserDecision));
+    }
+    function validAdjudicationTotals(p) {
+      let t=p.totals;
+      let values=t.salaryIncome+'|'+t.interestIncome+'|'+t.dividendIncome+'|'+t.fundAustralianIncome+'|'+t.fundForeignIncome+'|'+t.rentalIncome+'|'+t.rentalDeductions+'|'+t.otherIncome+'|'+t.deductions+'|'+t.frankingCredits+'|'+t.foreignTaxOffset+'|'+t.otherOffsets+'|'+t.withholding;
+      return p.keys().hasOnly(['schemaVersion','yearStart','sourceFingerprint','totals','adviserReference','evidenceReference','ruleVersion','reviewed','completeSources','legalIssuesCovered'])
+        && p.schemaVersion==1 && p.yearStart is int && p.sourceFingerprint is string && p.sourceFingerprint.matches('^[a-f0-9]{64}$')
+        && validString(p.adviserReference,1000) && validString(p.evidenceReference,1000) && validString(p.ruleVersion,1000)
+        && p.reviewed is bool && p.completeSources is bool && p.legalIssuesCovered is list
+        && t is map && t.keys().hasOnly(['salaryIncome','interestIncome','dividendIncome','fundAustralianIncome','fundForeignIncome','rentalIncome','rentalDeductions','rentalNet','netCapitalGain','otherIncome','deductions','frankingCredits','foreignTaxOffset','otherOffsets','withholding'])
+        && values.matches('^[0-9]+(\\.[0-9]{1,2})?(\\|[0-9]+(\\.[0-9]{1,2})?){12}$')
+        && t.rentalNet is string && t.rentalNet.matches('^-?[0-9]+(\\.[0-9]{1,2})?$') && t.netCapitalGain is string && t.netCapitalGain.matches('^[0-9]+(\\.[0-9]{1,12})?$');
+    }
+    function validDetailRecord(r,m,uid,id) {
+      let p=r.payload;
+      return r.keys().hasOnly(['index','kind','payload']) && r.index is int && r.index>=0 && r.index<m.count && id==string(r.index) && p is map &&
+        (m.family=='allocation' ? r.kind=='allocation' && validAllocationDetail(p,m,uid) :
+         m.family=='fund' ? (r.kind in ['fundAdjustment','fundDrp'] && ledgerGeneration(uid)==m.generation
+           && (r.kind=='fundAdjustment' ? validFundAdjustment(p) : validFundDrp(p)) && (!m.reviewed || validFundReference(p,m,uid,r.kind))) :
+         m.family=='workspace' ? (r.kind=='residency' ? validWorkspacePeriod(p) : r.kind=='i1' ? validI1Detail(p) :
+           r.kind=='adjudication' ? validAdjudicationTotals(p) : r.kind=='adjudicationLoss' && p.keys().hasOnly(['originStartYear','amount','evidenceReference'])
+             && p.originStartYear is int && p.originStartYear>=1900 && p.originStartYear<=m.yearStart && workspaceMoney(p.amount) && validString(p.evidenceReference,1000)) :
+         r.kind=='archiveChunk' && p.keys().hasOnly(['data']) && p.data is string && p.data.size()<=240000 && p.data.matches('^[A-Za-z0-9+/]*={0,2}$'));
+    }
+
     match /users/{userId} {
+      match /revision_details/{setId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && validDetailMeta(request.resource.data,userId) && setId.matches('^[a-f0-9]{64}$') && request.resource.data.state=='staging';
+        allow update: if isOwner(userId) && resource.data.state=='staging' && request.resource.data.state=='published'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state']) && detailTarget(request.resource.data,userId,setId);
+        allow delete: if false;
+        match /records/{recordId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && get(/databases/$(database)/documents/users/$(userId)/revision_details/$(setId)).data.state=='staging'
+            && validDetailRecord(request.resource.data,get(/databases/$(database)/documents/users/$(userId)/revision_details/$(setId)).data,userId,recordId);
+          allow update,delete: if false;
+        }
+      }
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId)
         && request.resource.data.keys().hasOnly(['createdAt', 'updatedAt']);

@@ -1,8 +1,11 @@
+import 'tax_rule_registry.dart';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/investment_ledger.dart';
+import '../models/document_coverage.dart';
+import 'holdings_reconciler.dart';
 import '../models/managed_fund_statement.dart';
 import '../models/tax_record.dart';
 import '../models/tax_decimal.dart';
@@ -55,6 +58,8 @@ class TaxWorkspaceCoordinator {
         await workspaces.getWorkspace(uid, yearStart) ??
         TaxWorkspace(userId: uid, yearStart: yearStart);
     final items = await workspaces.getItems(uid, yearStart);
+    final coverage = await workspaces.getDocumentCoverage(uid, yearStart);
+    final documentIssues = coverageIssues(coverage);
     final rentals = (await sources.getUserTaxRecords(uid).first)
         .where((r) => r.financialYear == TaxYear(yearStart).toString())
         .toList();
@@ -195,6 +200,51 @@ class TaxWorkspaceCoordinator {
       statements: funds,
       asOfDate: DateTime.utc(yearStart + 1, 6, 30),
     );
+    for (final observation in coverage.where(
+      (r) => r.family.endsWith('Holdings') && r.state == 'reviewed',
+    )) {
+      final cutoff = parseDocumentDate(observation.observationDateIso);
+      if (cutoff == null) {
+        documentIssues.add('Holdings observation date requires review.');
+        continue;
+      }
+      documentIssues.addAll(
+        reconcileHoldings(
+          observation,
+          InvestmentParcelLedger().replay(
+            transactions: transactions,
+            allocations: allocations,
+            statements: funds,
+            asOfDate: cutoff,
+          ),
+        ),
+      );
+    }
+    documentIssues.addAll(
+      knownDocumentCoverageIssues(coverage, [
+        for (final t in transactions.where(
+          (t) => !t.isVoided && year.contains(t.tradeDate),
+        ))
+          {
+            'domain': 'investment_transactions',
+            'id': t.id ?? '',
+            'account': t.accountNumber ?? '',
+            'ticker': t.ticker,
+            'family': 'brokerTrade',
+            'sourceHash': t.sourceHash ?? '',
+          },
+        for (final f in funds.where(
+          (f) => !f.isVoided && f.yearStart == yearStart,
+        ))
+          {
+            'domain': 'managed_fund_statements',
+            'id': f.id ?? '',
+            'account': f.accountNumber,
+            'ticker': f.ticker,
+            'family': 'fundAnnual',
+          },
+      ]),
+    );
     final capitalActivity =
         transactions.any(
           (t) => !t.isVoided && t.isSell && year.contains(t.tradeDate),
@@ -210,7 +260,7 @@ class TaxWorkspaceCoordinator {
       workspaceGeneration: generation,
       investmentHistoryStart: historyStart,
       hasCapitalActivity: capitalActivity,
-      investmentIssues: [...ledger.issues, ...priorIssues],
+      investmentIssues: [...ledger.issues, ...priorIssues, ...documentIssues],
     );
     final audit = freezeTaxSnapshot(
       Map<String, dynamic>.from(
@@ -227,6 +277,7 @@ class TaxWorkspaceCoordinator {
               'allocations': allocations.map((a) => a.toMap()).toList(),
               'cgtSnapshot': selected,
               'priorLossAnchor': anchor,
+              'documentCoverage': coverage.map((r) => r.toMap()).toList(),
             })
             as Map,
       ),
@@ -242,7 +293,11 @@ class TaxWorkspaceCoordinator {
       investmentGeneration: investmentGeneration,
       investmentHistoryStart: historyStart,
       hasCapitalActivity: capitalActivity,
-      investmentIssues: List.unmodifiable([...ledger.issues, ...priorIssues]),
+      investmentIssues: List.unmodifiable([
+        ...ledger.issues,
+        ...priorIssues,
+        ...documentIssues,
+      ]),
       auditSources: audit,
     );
   }
@@ -333,13 +388,6 @@ class TaxWorkspaceCoordinator {
             )) {
       throw StateError('Sources changed while exporting the backup. Reload.');
     }
-    if (current.items.length > 200 ||
-        snapshots.length > 100 ||
-        utf8.encode(jsonEncode(current.auditSources)).length > 800000) {
-      throw StateError(
-        'Workspace exceeds the supported backup source/archive limits.',
-      );
-    }
     final backup = const JsonEncoder.withIndent('  ').convert(
       _jsonValue({
         'format': 'au-tax-workspace-backup',
@@ -353,27 +401,19 @@ class TaxWorkspaceCoordinator {
         'history': history,
       }),
     );
-    if (utf8.encode(backup).length > 5 * 1024 * 1024) {
-      throw StateError('Workspace backup exceeds the 5 MB restore limit.');
-    }
-    if (utf8
-            .encode(
-              jsonEncode(
-                _sourceArchive(jsonDecode(backup) as Map<String, dynamic>),
-              ),
-            )
-            .length >
-        900000) {
+    if (utf8.encode(backup).length > 32 * 1024 * 1024) {
       throw StateError(
-        'The immutable source audit exceeds the supported archive limit.',
+        'Backup exceeds the 32 MB file safety limit. Export years separately.',
       );
     }
     return backup;
   }
 
   Future<int> restoreBackup(String uid, String text) async {
-    if (utf8.encode(text).length > 5 * 1024 * 1024) {
-      throw const FormatException('Backup exceeds 5 MB.');
+    if (utf8.encode(text).length > 32 * 1024 * 1024) {
+      throw const FormatException(
+        'Backup exceeds the 32 MB file safety limit.',
+      );
     }
     late Map<String, dynamic> data;
     late TaxWorkspace restored;
@@ -402,15 +442,13 @@ class TaxWorkspaceCoordinator {
       );
       if (restored.userId != uid ||
           restored.yearStart != data['yearStart'] ||
-          ![2024, 2025].contains(restored.yearStart) ||
+          !TaxRuleRegistry.supports(restored.yearStart) ||
           restored.validation().isNotEmpty) {
         throw const FormatException();
       }
       final entries = data['items'] as List;
       final archives = data['snapshots'] as List;
-      if (entries.length > 200 ||
-          archives.length > 100 ||
-          data['sources'] is! Map) {
+      if (data['sources'] is! Map) {
         throw const FormatException();
       }
       final history = Map<String, dynamic>.from(data['history'] as Map);
@@ -469,16 +507,28 @@ class TaxWorkspaceCoordinator {
           .map((raw) => Map<String, dynamic>.from(raw as Map))
           .toList();
       final audit = Map<String, dynamic>.from(data['sources'] as Map);
-      if (!_only(audit, {
-            'rentals',
-            'fundStatements',
-            'transactions',
-            'allocations',
-            'cgtSnapshot',
-            'priorLossAnchor',
-          }) ||
-          utf8.encode(jsonEncode(audit)).length > 800000) {
+      final coreAudit = {...audit}..remove('documentCoverage');
+      if (!_only(coreAudit, {
+        'rentals',
+        'fundStatements',
+        'transactions',
+        'allocations',
+        'cgtSnapshot',
+        'priorLossAnchor',
+      })) {
         throw const FormatException();
+      }
+      if (audit.containsKey('documentCoverage')) {
+        for (final raw in audit['documentCoverage'] as List) {
+          final record = DocumentCoverage.fromMap(
+            Map<String, dynamic>.from(raw as Map),
+          );
+          if (record.userId != uid ||
+              record.taxYearStart != restored.yearStart ||
+              record.validation().isNotEmpty) {
+            throw const FormatException();
+          }
+        }
       }
       for (final key in ['rentals', 'fundStatements', 'transactions']) {
         for (final fact in audit[key] as List) {
@@ -493,19 +543,15 @@ class TaxWorkspaceCoordinator {
                   audit['cgtSnapshot']['userId'] != uid))) {
         throw const FormatException();
       }
-      if (utf8.encode(jsonEncode(_sourceArchive(data))).length > 900000) {
+      if (audit['priorLossAnchor'] != null &&
+          (audit['priorLossAnchor'] is! Map ||
+              audit['priorLossAnchor']['userId'] != uid)) {
         throw const FormatException();
       }
       for (final archive in snapshots) {
         if (archive['userId'] != uid ||
             archive['yearStart'] != restored.yearStart ||
-            archive['payload'] is! Map ||
-            utf8.encode(jsonEncode(archive)).length > 900000) {
-          throw const FormatException();
-        }
-        if (audit['priorLossAnchor'] != null &&
-            (audit['priorLossAnchor'] is! Map ||
-                audit['priorLossAnchor']['userId'] != uid)) {
+            archive['payload'] is! Map) {
           throw const FormatException();
         }
       }

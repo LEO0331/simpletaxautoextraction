@@ -1,5 +1,7 @@
 import '../models/investment_ledger.dart';
 import '../models/tax_decimal.dart';
+import 'tax_rule_registry.dart';
+import '../models/tax_workspace.dart';
 
 class CapitalLossCarryForward {
   final int originStartYear;
@@ -91,9 +93,61 @@ class AnnualCgtCalculator {
     required InvestmentLedgerResult ledger,
     required TaxYear year,
     required AnnualCgtContext context,
+    List<I1Review> i1Reviews = const [],
   }) {
     final issues = [...ledger.issues];
-    if (year.startYear != 2024 && year.startYear != 2025) {
+    final i1Events = <_AnnualCgtEvent>[];
+    for (final review in i1Reviews) {
+      if (review.validation().isNotEmpty) {
+        issues.add('Invalid I1 adviser review');
+        continue;
+      }
+      if (!year.contains(workspaceDate(review.date))) continue;
+      final decision = review.adviserDecision;
+      final assetScope = i1Reviews
+          .where((r) => r.date == review.date)
+          .map((r) => r.assetReference)
+          .toSet();
+      if (!review.reviewed ||
+          review.validation().isNotEmpty ||
+          decision == null ||
+          decision.validation().isNotEmpty ||
+          decision.ruleVersion != TaxRuleRegistry.version(year.startYear) ||
+          !decision.coveredAssets.toSet().containsAll(assetScope) ||
+          !assetScope.containsAll(decision.coveredAssets) ||
+          review.classification == 'unknown' ||
+          review.election == 'undecided') {
+        issues.add(
+          'I1 requires a reviewed adviser determination covering the complete event asset scope',
+        );
+        continue;
+      }
+      if (review.classification != 'nonTAP' || review.election != 'recognise') {
+        if (!TaxDecimal.parse(decision.gain).isZero ||
+            !TaxDecimal.parse(decision.loss).isZero) {
+          issues.add(
+            'Excluded or deferred I1 cannot contribute an annual gain/loss',
+          );
+        }
+        continue;
+      }
+      i1Events.add(_AnnualCgtEvent.i1(review));
+    }
+    final i1Ids = <String>{};
+    if (i1Reviews.any((r) => !i1Ids.add('${r.date}|${r.assetReference}'))) {
+      issues.add('Repeated I1 asset');
+    }
+    final i1Choices = <String, Set<String>>{};
+    for (final r in i1Reviews.where((r) => r.classification == 'nonTAP')) {
+      i1Choices.putIfAbsent(r.date, () => {}).add(r.election);
+    }
+    if (i1Choices.values.any(
+      (choices) =>
+          choices.contains('recognise') && choices.contains('deferAllEligible'),
+    )) {
+      issues.add('I1 deferral election must cover all eligible assets');
+    }
+    if (!TaxRuleRegistry.supports(year.startYear)) {
       issues.add('Unsupported financial-year rule set');
     }
     if (!context.confirmedContinuousResident ||
@@ -156,6 +210,7 @@ class AnnualCgtCalculator {
         [
           ...ledger.disposals.map(_AnnualCgtEvent.disposal),
           ...ledger.fundGains.map(_AnnualCgtEvent.fund),
+          ...i1Events,
         ].where((d) => year.contains(d.disposalDate)).toList()..sort((a, b) {
           final eligibility = (a.discountEligible ? 1 : 0).compareTo(
             b.discountEligible ? 1 : 0,
@@ -244,9 +299,11 @@ class AnnualCgtCalculator {
       lossApplications: applications,
       snapshot: {
         'calculationVersion': 'annual-cgt-v2',
-        'ruleVersion': 'AU-individual-resident-${year.toString()}-v1',
+        'ruleVersion': TaxRuleRegistry.version(year.startYear),
         'context': context.toMap(),
         'ledger': ledger.toMap(),
+        if (i1Reviews.isNotEmpty)
+          'i1Reviews': i1Reviews.map((r) => r.toMap()).toList(),
         'roundingPolicy':
             'Currency allocation half away from zero to cents; final parcel consumes residual; discount precision retained',
         'lossAllocationPolicy':
@@ -282,6 +339,16 @@ class _AnnualCgtEvent {
   final DateTime disposalDate;
   final TaxDecimal capitalGain, capitalLoss;
   final bool discountEligible;
+  _AnnualCgtEvent.i1(I1Review r)
+    : sellTransactionId = 'I1:${r.date}:${r.assetReference}',
+      buyTransactionId = r.assetReference,
+      sourceKind = 'I1-adviser',
+      statementId = null,
+      acquisitionDate = null,
+      disposalDate = workspaceDate(r.date),
+      capitalGain = TaxDecimal.parse(r.adviserDecision!.gain),
+      capitalLoss = TaxDecimal.parse(r.adviserDecision!.loss),
+      discountEligible = r.adviserDecision!.discountFraction == '0.5';
   _AnnualCgtEvent.disposal(RealisedDisposal d)
     : sellTransactionId = d.sellTransactionId,
       buyTransactionId = d.buyTransactionId,

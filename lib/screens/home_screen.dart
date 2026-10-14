@@ -445,11 +445,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
-          IconButton(
-            tooltip: 'Tax-year workspace',
-            icon: const Icon(Icons.calendar_month),
-            onPressed: () => Navigator.pushNamed(context, '/tax-years'),
-          ),
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),
@@ -896,6 +891,21 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Tax-year workspace',
+            icon: const Icon(Icons.calendar_month),
+            onPressed: () => Navigator.pushNamed(context, '/tax-years'),
+          ),
+          IconButton(
+            tooltip: 'Document inventory',
+            icon: const Icon(Icons.folder_open),
+            onPressed: () => Navigator.pushNamed(context, '/documents'),
+          ),
+          IconButton(
+            tooltip: 'Account backup and recovery',
+            icon: const Icon(Icons.backup_outlined),
+            onPressed: () => Navigator.pushNamed(context, '/account-backup'),
+          ),
           TextButton.icon(
             onPressed: () =>
                 Navigator.pushNamed(context, InvestmentCgtRoutes.home),

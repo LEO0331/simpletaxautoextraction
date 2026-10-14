@@ -6,6 +6,7 @@ import '../models/tax_decimal.dart';
 import '../utils/source_fingerprint.dart';
 import '../models/investment_transaction.dart';
 import 'investment_parcel_ledger.dart';
+import 'revision_detail_store.dart';
 import '../models/tax_record.dart';
 
 class SaveTaxRecordResult {
@@ -85,6 +86,28 @@ class FirestoreService {
 
   Future<void> saveTaxRecord(TaxRecord record) async {
     await saveTaxRecordWithStrategy(record);
+  }
+
+  Future<void> restoreRentalRecord(TaxRecord record) async {
+    final normalized = _normalizeTaxRecordForWrite(record);
+    final id = normalized.id;
+    if (id == null || !RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id)) {
+      throw StateError('Rental restore requires a safe original identity.');
+    }
+    await _writeRentalRecord(
+      normalized.userId,
+      _db
+          .collection('users')
+          .doc(normalized.userId)
+          .collection('tax_records')
+          .doc(id),
+      {
+        ...normalized.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      createOnly: true,
+    );
   }
 
   Future<SaveTaxRecordResult> saveTaxRecordWithStrategy(
@@ -275,14 +298,18 @@ class FirestoreService {
   Future<void> _writeRentalRecord(
     String userId,
     DocumentReference<Map<String, dynamic>> recordRef,
-    Map<String, dynamic> data,
-  ) async {
+    Map<String, dynamic> data, {
+    bool createOnly = false,
+  }) async {
     final user = _db.collection('users').doc(userId);
     final metadata = user.collection('tax_workspace_metadata').doc('current');
     final year = (data['financialYear'] as String).split('-').first;
     await _db.runTransaction((transaction) async {
       final state = await transaction.get(metadata);
       final existing = await transaction.get(recordRef);
+      if (createOnly && existing.exists) {
+        throw StateError('Rental restore cannot overwrite an existing record.');
+      }
       final previousYear = (existing.data()?['financialYear'] as String?)
           ?.split('-')
           .first;
@@ -336,8 +363,19 @@ class FirestoreService {
   }
 
   Future<String> saveInvestmentTransaction(
-    InvestmentTransaction transaction,
-  ) async {
+    InvestmentTransaction transaction, {
+    String? creationId,
+  }) async {
+    if (creationId != null &&
+        (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(creationId) ||
+            (transaction.id?.isNotEmpty ?? false) ||
+            transaction.isReviewed ||
+            transaction.isLocked ||
+            transaction.revision != 0)) {
+      throw StateError(
+        'Restore requires an unreviewed new record and a safe identity.',
+      );
+    }
     final normalizedTransaction = _normalizeInvestmentTransactionForWrite(
       transaction,
     );
@@ -405,11 +443,20 @@ class FirestoreService {
             ? normalizedTransaction.id!
             : (source.data()?['transactionId'] as String? ??
                   legacyDuplicate?.id ??
+                  creationId ??
                   identity),
       );
+      if (creationId != null && ref.id != creationId) {
+        throw StateError('Restore source already belongs to another identity.');
+      }
       final existing = await tx.get(ref);
       final meta = await tx.get(metadata);
       if (!isUpdate && existing.exists) {
+        if (creationId != null &&
+            existing.data()?['sourceIdentity'] != identity) {
+          throw StateError('Restore cannot overwrite another source identity.');
+        }
+
         final stored = InvestmentTransaction.fromMap(existing.data()!, ref.id);
         final candidate = normalizedTransaction.toMap();
         final previous = stored.toMap();
@@ -547,10 +594,47 @@ class FirestoreService {
         .doc(userId)
         .collection('managed_fund_statements')
         .get();
-    return result.docs
-        .map((doc) => ManagedFundStatement.fromMap(doc.data(), id: doc.id))
-        .where((statement) => includeVoided || !statement.isVoided)
-        .toList();
+    final statements = <ManagedFundStatement>[];
+    for (final doc in result.docs) {
+      if (!includeVoided && doc.data()['isVoided'] == true) continue;
+      statements.add(
+        ManagedFundStatement.fromMap(
+          await _hydrateFund(userId, doc.data()),
+          id: doc.id,
+        ),
+      );
+    }
+    return statements;
+  }
+
+  Future<Map<String, dynamic>> _hydrateFund(
+    String userId,
+    Map<String, dynamic> data,
+  ) async {
+    if (data['schemaVersion'] != 2) return data;
+    final records = await RevisionDetailStore(
+      db: _db,
+    ).read(userId, data, family: 'fund');
+    if (records.any(
+      (r) => !{'fundAdjustment', 'fundDrp'}.contains(r['kind']),
+    )) {
+      throw StateError('Statement details require review.');
+    }
+    return {
+        ...data,
+        'schemaVersion': 1,
+        'adjustments': [
+          for (final r in records)
+            if (r['kind'] == 'fundAdjustment') r['payload'],
+        ],
+        'drpLinks': [
+          for (final r in records)
+            if (r['kind'] == 'fundDrp') r['payload'],
+        ],
+      }
+      ..remove('detailSetId')
+      ..remove('detailCount')
+      ..remove('detailHash');
   }
 
   /// Corrections replace current facts while preserving immutable source history.
@@ -569,11 +653,6 @@ class FirestoreService {
       throw StateError('A statement owner is required.');
     }
     final issues = statement.validation();
-    if (statement.adjustments.length > 4 || statement.drpLinks.length > 4) {
-      throw StateError(
-        'A statement supports up to four adjustment slices and four DRP links.',
-      );
-    }
     if (statement.isReviewed && !statement.isVoided && issues.isNotEmpty) {
       throw StateError(
         'Review statement fields before saving: ${issues.join('; ')}',
@@ -622,16 +701,44 @@ class FirestoreService {
     final ref = user.collection('managed_fund_statements').doc(identity);
     final source = statement.toMap()..remove('id');
     final comparison = Map<String, dynamic>.from(source)..remove('revision');
+    final before = await ref.get();
+    final previous = before.exists
+        ? await _hydrateFund(statement.userId, before.data()!)
+        : null;
+    if (previous != null) {
+      previous.remove('revision');
+      previous.remove('createdAt');
+      previous.remove('updatedAt');
+    }
+    final unchanged =
+        previous != null && _sameStatementFacts(previous, comparison);
+    final details = RevisionDetailStore(db: _db);
+    final staged = unchanged
+        ? null
+        : await details.stage(
+            userId: statement.userId,
+            family: 'fund',
+            subjectId: identity,
+            revision: statement.revision + 1,
+            generation: generation,
+            yearStart: statement.yearStart,
+            ticker: statement.ticker,
+            accountNumber: statement.accountNumber,
+            reviewed: statement.isReviewed && !statement.isVoided,
+            records: [
+              for (final a in statement.adjustments)
+                {'kind': 'fundAdjustment', 'payload': a.toMap()},
+              for (final d in statement.drpLinks)
+                {'kind': 'fundDrp', 'payload': d.toMap()},
+            ],
+          );
     await _db.runTransaction((tx) async {
       final existing = await tx.get(ref);
       final meta = await tx.get(_ledgerMetadata(statement.userId));
       final current = existing.data();
-      if (current != null) {
-        final previous = Map<String, dynamic>.from(current)
-          ..remove('revision')
-          ..remove('createdAt')
-          ..remove('updatedAt');
-        if (_sameStatementFacts(previous, comparison)) return;
+      if (unchanged) {
+        if (current?['revision'] == before.data()?['revision']) return;
+        throw StateError('Statement changed. Reload before saving.');
       }
       if ((current?['revision'] ?? 0) != statement.revision) {
         throw StateError(
@@ -641,35 +748,20 @@ class FirestoreService {
       if ((meta.data()?['generation'] ?? 0) != generation) {
         throw StateError('Ledger changed. Reload before saving the statement.');
       }
-      if (statement.isReviewed && !statement.isVoided) {
-        final references = <String>{
-          ...statement.adjustments.map((adjustment) => adjustment.parcelId),
-          ...statement.drpLinks.map((link) => link.buyTransactionId),
-        };
-        for (final id in references) {
-          final fact = await tx.get(
-            user.collection('investment_transactions').doc(id),
-          );
-          final data = fact.data();
-          if (data == null ||
-              data['transactionType'] != 'BUY' ||
-              data['isVoided'] == true ||
-              data['isReviewed'] != true ||
-              data['ticker'] != statement.ticker ||
-              data['accountNumber'] != statement.accountNumber) {
-            throw StateError(
-              'Statement parcel and DRP links require matching reviewed acquisitions.',
-            );
-          }
-        }
-      }
+      final detailSet = staged!;
+      await details.verify(tx, detailSet);
       final revision = statement.revision + 1;
       final data = <String, dynamic>{
         ...source,
+        'schemaVersion': 2,
+        ...detailSet.fields,
         'revision': revision,
         'createdAt': current?['createdAt'] ?? FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
+      data.remove('adjustments');
+      data.remove('drpLinks');
+      details.publish(tx, detailSet);
       tx.set(ref, data);
       tx.set(ref.collection('revisions').doc('$revision'), data);
       tx.set(_ledgerMetadata(statement.userId), {'generation': generation + 1});
@@ -689,22 +781,23 @@ class FirestoreService {
         .collection('revisions')
         .orderBy('revision', descending: true)
         .get();
-    return revisions.docs
-        .map(
-          (doc) => <String, dynamic>{
-            ...doc.data(),
-            'id': doc.id,
-            'createdAt': (doc.data()['createdAt'] as Timestamp?)
-                ?.toDate()
-                .toUtc()
-                .toIso8601String(),
-            'updatedAt': (doc.data()['updatedAt'] as Timestamp?)
-                ?.toDate()
-                .toUtc()
-                .toIso8601String(),
-          },
-        )
-        .toList();
+    final result = <Map<String, dynamic>>[];
+    for (final doc in revisions.docs) {
+      final data = await _hydrateFund(userId, doc.data());
+      result.add({
+        ...data,
+        'id': doc.id,
+        'createdAt': (data['createdAt'] as Timestamp?)
+            ?.toDate()
+            .toUtc()
+            .toIso8601String(),
+        'updatedAt': (data['updatedAt'] as Timestamp?)
+            ?.toDate()
+            .toUtc()
+            .toIso8601String(),
+      });
+    }
+    return result;
   }
 
   bool _sameStatementFacts(Object? left, Object? right) {
@@ -734,9 +827,41 @@ class FirestoreService {
         .doc(userId)
         .collection('investment_allocations')
         .get();
-    return result.docs
-        .map((doc) => SaleAllocation.fromMap(doc.data()))
-        .toList();
+    final allocations = <SaleAllocation>[];
+    for (final doc in result.docs) {
+      final data = doc.data();
+      if (data['schemaVersion'] != 2) {
+        allocations.add(SaleAllocation.fromMap(data));
+        continue;
+      }
+      final records = await RevisionDetailStore(
+        db: _db,
+      ).read(userId, data, family: 'allocation');
+      if (records.any((r) => r['kind'] != 'allocation')) {
+        throw StateError('Parcel details require review.');
+      }
+      final saleId = data['sellTransactionId'] as String;
+      final revisions = <String, int>{};
+      final selections = <Map<String, dynamic>>[];
+      for (final record in records) {
+        final payload = Map<String, dynamic>.from(record['payload'] as Map);
+        revisions[saleId] = payload['saleRevision'] as int;
+        revisions[payload['buyTransactionId'] as String] =
+            payload['buyRevision'] as int;
+        selections.add({
+          'buyTransactionId': payload['buyTransactionId'],
+          'units': payload['units'],
+        });
+      }
+      allocations.add(
+        SaleAllocation.fromMap({
+          ...data,
+          'selections': selections,
+          'transactionRevisions': revisions,
+        }),
+      );
+    }
+    return allocations;
   }
 
   Future<void> saveInvestmentAllocation(
@@ -778,6 +903,45 @@ class FirestoreService {
         .collection('investment_allocations')
         .doc(allocation.sellTransactionId);
     final metadata = _ledgerMetadata(userId);
+    if (!allocation.transactionRevisions.containsKey(
+          allocation.sellTransactionId,
+        ) ||
+        allocation.selections.any(
+          (s) =>
+              !allocation.transactionRevisions.containsKey(s.buyTransactionId),
+        )) {
+      throw StateError('Parcel selection must include all input revisions.');
+    }
+    for (final entry in allocation.transactionRevisions.entries) {
+      if (!facts.any((f) => f.id == entry.key && f.revision == entry.value)) {
+        throw StateError('Investment facts changed. Reload parcel selections.');
+      }
+    }
+    final details = RevisionDetailStore(db: _db);
+    final staged = await details.stage(
+      userId: userId,
+      family: 'allocation',
+      subjectId: allocation.sellTransactionId,
+      revision: previousRevision + 1,
+      generation: generation,
+      ticker: saleFact.ticker,
+      accountNumber: saleFact.accountNumber ?? '',
+      saleRevision: saleFact.revision,
+      reviewed: true,
+      records: [
+        for (final s in allocation.selections)
+          {
+            'kind': 'allocation',
+            'payload': {
+              'buyTransactionId': s.buyTransactionId,
+              'units': s.units,
+              'buyRevision':
+                  allocation.transactionRevisions[s.buyTransactionId],
+              'saleRevision': saleFact.revision,
+            },
+          },
+      ],
+    );
     await _db.runTransaction((tx) async {
       final existing = await tx.get(ref);
       final meta = await tx.get(metadata);
@@ -789,28 +953,12 @@ class FirestoreService {
       if ((existing.data()?['revision'] ?? 0) != previousRevision) {
         throw StateError('Parcel selection changed. Reload before saving.');
       }
-      if (!allocation.transactionRevisions.containsKey(
-            allocation.sellTransactionId,
-          ) ||
-          allocation.selections.any(
-            (selection) => !allocation.transactionRevisions.containsKey(
-              selection.buyTransactionId,
-            ),
-          )) {
-        throw StateError('Parcel selection must include all input revisions.');
-      }
-      for (final entry in allocation.transactionRevisions.entries) {
-        final fact = await tx.get(
-          user.collection('investment_transactions').doc(entry.key),
-        );
-        if (!fact.exists || (fact.data()?['revision'] ?? 0) != entry.value) {
-          throw StateError(
-            'Investment facts changed. Reload parcel selections.',
-          );
-        }
-      }
+      await details.verify(tx, staged);
       final data = <String, dynamic>{
-        ...allocation.toMap(),
+        'schemaVersion': 2,
+        ...staged.fields,
+        'sellTransactionId': allocation.sellTransactionId,
+        'method': allocation.method,
         'userId': userId,
         'revision': previousRevision + 1,
         'updatedAt': FieldValue.serverTimestamp(),
@@ -825,6 +973,7 @@ class FirestoreService {
           sale.data()?['isVoided'] == true) {
         throw StateError('A current unlocked sale is required.');
       }
+      details.publish(tx, staged);
       tx.set(ref, data);
       tx.set(ref.collection('revisions').doc('${previousRevision + 1}'), data);
       tx.set(metadata, {
@@ -843,6 +992,61 @@ class FirestoreService {
     snapshot = Map<String, dynamic>.from(
       jsonDecode(jsonEncode(snapshot)) as Map,
     );
+    final revisions = Map<String, dynamic>.from(
+      snapshot['inputRevisions'] as Map? ?? {},
+    );
+    if (revisions.isEmpty) {
+      final provenance = snapshot['snapshot'] as Map?;
+      final context = provenance?['context'] as Map?;
+      if (snapshot['schemaVersion'] != 1 ||
+          snapshot['inputRevisions'] is! Map ||
+          context?['completeHistory'] != true ||
+          context?['priorLossesReviewed'] != true ||
+          (snapshot['openingLossEvidence'] as String? ?? '').trim().isEmpty) {
+        throw StateError(
+          'An empty-year snapshot requires reviewed history and loss evidence.',
+        );
+      }
+    }
+    for (final entry in revisions.entries) {
+      final fact = await user
+          .collection('investment_transactions')
+          .doc(entry.key)
+          .get();
+      if (!fact.exists || (fact.data()?['revision'] ?? 0) != entry.value) {
+        throw StateError(
+          'Investment facts changed. Recalculate the worksheet.',
+        );
+      }
+    }
+    final allocationRevisions = Map<String, dynamic>.from(
+      snapshot['allocationRevisions'] as Map? ?? {},
+    );
+    for (final entry in allocationRevisions.entries) {
+      final allocation = await user
+          .collection('investment_allocations')
+          .doc(entry.key)
+          .get();
+      if (!allocation.exists || allocation.data()?['revision'] != entry.value) {
+        throw StateError(
+          'Parcel selections changed. Recalculate the worksheet.',
+        );
+      }
+    }
+    final statementRevisions = Map<String, dynamic>.from(
+      snapshot['statementRevisions'] as Map? ?? {},
+    );
+    for (final entry in statementRevisions.entries) {
+      final statement = await user
+          .collection('managed_fund_statements')
+          .doc(entry.key)
+          .get();
+      if (!statement.exists ||
+          statement.data()?['revision'] != entry.value ||
+          statement.data()?['isVoided'] == true) {
+        throw StateError('Fund statements changed. Recalculate the worksheet.');
+      }
+    }
     await _db.runTransaction((tx) async {
       final metadata = await tx.get(_ledgerMetadata(userId));
       if (snapshot['ledgerGeneration'] !=
@@ -850,61 +1054,6 @@ class FirestoreService {
         throw StateError(
           'Ledger changed. Recalculate before saving the worksheet.',
         );
-      }
-      final revisions = Map<String, dynamic>.from(
-        snapshot['inputRevisions'] as Map? ?? {},
-      );
-      if (revisions.isEmpty) {
-        final provenance = snapshot['snapshot'] as Map?;
-        final context = provenance?['context'] as Map?;
-        if (snapshot['schemaVersion'] != 1 ||
-            snapshot['inputRevisions'] is! Map ||
-            context?['completeHistory'] != true ||
-            context?['priorLossesReviewed'] != true ||
-            (snapshot['openingLossEvidence'] as String? ?? '').trim().isEmpty) {
-          throw StateError(
-            'An empty-year snapshot requires reviewed history and loss evidence.',
-          );
-        }
-      }
-      for (final entry in revisions.entries) {
-        final fact = await tx.get(
-          user.collection('investment_transactions').doc(entry.key),
-        );
-        if (!fact.exists || (fact.data()?['revision'] ?? 0) != entry.value) {
-          throw StateError(
-            'Investment facts changed. Recalculate the worksheet.',
-          );
-        }
-      }
-      final allocationRevisions = Map<String, dynamic>.from(
-        snapshot['allocationRevisions'] as Map? ?? {},
-      );
-      for (final entry in allocationRevisions.entries) {
-        final allocation = await tx.get(
-          user.collection('investment_allocations').doc(entry.key),
-        );
-        if (!allocation.exists ||
-            allocation.data()?['revision'] != entry.value) {
-          throw StateError(
-            'Parcel selections changed. Recalculate the worksheet.',
-          );
-        }
-      }
-      final statementRevisions = Map<String, dynamic>.from(
-        snapshot['statementRevisions'] as Map? ?? {},
-      );
-      for (final entry in statementRevisions.entries) {
-        final statement = await tx.get(
-          user.collection('managed_fund_statements').doc(entry.key),
-        );
-        if (!statement.exists ||
-            statement.data()?['revision'] != entry.value ||
-            statement.data()?['isVoided'] == true) {
-          throw StateError(
-            'Fund statements changed. Recalculate the worksheet.',
-          );
-        }
       }
       tx.set(ref, {
         ...snapshot,

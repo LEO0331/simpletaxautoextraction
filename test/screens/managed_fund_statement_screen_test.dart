@@ -209,18 +209,18 @@ void main() {
     await tester.tap(find.text('Non-AMIT').last);
     await tester.pumpAndSettle();
     await reveal(tester, find.byKey(const Key('save-fund-statement')));
-    expect(find.textContaining('NeedsTaxReview: Non-AMIT'), findsOneWidget);
+    expect(find.byKey(const Key('fund-reviewed')), findsOneWidget);
     await tester.tap(find.byKey(const Key('save-fund-statement')));
     await tester.pumpAndSettle();
     final saved = (await store.getManagedFundStatementsOnce(
       'synthetic-owner',
     )).single;
-    expect(saved.regime, 'non-AMIT');
+    expect(saved.regime, 'NON_AMIT');
     expect(saved.isReviewed, isFalse);
-    expect(
-      saved.validation(),
-      contains('Non-AMIT basis and non-assessable payments require tax review'),
-    );
+    expect(saved.validation(), isEmpty);
+    expect(saved.components['taxDeferred'], '0');
+    expect(saved.components['taxFree'], '0');
+    expect(saved.components['taxExempt'], '0');
     expect(find.textContaining('NeedsTaxReview · revision 2'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

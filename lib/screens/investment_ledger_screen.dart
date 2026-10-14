@@ -585,7 +585,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                   Text(issue, style: const TextStyle(color: Colors.red)),
                 if (ledger.costBaseHistory.isNotEmpty)
                   ExpansionTile(
-                    title: const Text('AMIT cost-base history'),
+                    title: const Text('Cost-base and corporate-action history'),
                     children: [
                       for (final adjustment in ledger.costBaseHistory)
                         ListTile(
@@ -593,9 +593,9 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                             '${adjustment['date']} · parcel ${adjustment['parcelId']}',
                           ),
                           subtitle: Text(
-                            'Statement ${adjustment['statementId']} revision ${adjustment['statementRevision']}\n'
-                            'Basis ${adjustment['openingCostBase']} → ${adjustment['closingCostBase']} · '
-                            'adjustment ${adjustment['amount']} · E10 gain ${adjustment['e10Gain']}\n'
+                            '${adjustment['kind'] == 'split' ? 'Split ${adjustment['corporateActionId']} revision ${adjustment['revision']} · units ${adjustment['oldUnits']} → ${adjustment['newUnits']}' : 'Statement ${adjustment['statementId']} revision ${adjustment['statementRevision']} · adjustment ${adjustment['amount']} · ${adjustment.containsKey('e4Gain') ? 'E4' : 'E10'} gain ${adjustment['e4Gain'] ?? adjustment['e10Gain']}'}\n'
+                            'Basis ${adjustment['openingCostBase']} → ${adjustment['closingCostBase']}\n'
+                            'Reduced basis ${adjustment['openingReducedCostBase']} → ${adjustment['closingReducedCostBase']}\n'
                             'Evidence: ${adjustment['evidenceReference']}',
                           ),
                         ),

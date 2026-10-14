@@ -1,3 +1,5 @@
+import 'package:simpletaxautoextraction/models/document_coverage.dart';
+import 'package:simpletaxautoextraction/services/document_coverage_service.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -47,6 +49,54 @@ void main() {
     sources = FirestoreService(db: db);
     coordinator = TaxWorkspaceCoordinator(workspaces: store, sources: sources);
   });
+  test(
+    'missing documents and unmatched observed holdings block finalisation',
+    () async {
+      await store.saveWorkspace(ready(2024));
+      final before = await coordinator.load('owner', 2024);
+      expect(before.report.canFinalise, isTrue);
+      final coverage = DocumentCoverageService(db: db);
+      await coverage.save(
+        const DocumentCoverage(
+          userId: 'owner',
+          taxYearStart: 2024,
+          account: 'Synthetic account',
+          ticker: 'SYN',
+          family: 'fundAnnual',
+        ),
+        expectedRevision: 0,
+      );
+      final missing = await coordinator.load('owner', 2024);
+      expect(missing.report.canFinalise, isFalse);
+      expect(
+        missing.report.sourceFingerprint,
+        isNot(before.report.sourceFingerprint),
+      );
+      expect(missing.report.issues.any((i) => i.contains('evidence')), isTrue);
+      await coverage.save(
+        const DocumentCoverage(
+          userId: 'owner',
+          taxYearStart: 2024,
+          account: 'Synthetic account',
+          ticker: 'SYN',
+          family: 'closingHoldings',
+          state: 'reviewed',
+          evidenceReference: 'Synthetic closing evidence',
+          observationDateIso: '2025-06-30',
+          unitsExact: '10',
+        ),
+        expectedRevision: 0,
+      );
+      final unmatched = await coordinator.load('owner', 2024);
+      expect(
+        unmatched.report.issues.any((i) => i.contains('holdings do not match')),
+        isTrue,
+      );
+      expect(unmatched.auditSources['documentCoverage'], hasLength(2));
+      await expectLater(coordinator.finalise(unmatched), throwsStateError);
+    },
+  );
+
   Future<void> lossSnapshot(
     String id,
     int year,

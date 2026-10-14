@@ -1,6 +1,6 @@
 # Testing Harness
 
-Source: CI on GitHub Actions uses a different Flutter version and environment from local development, and long widget journeys have been flaky.
+Source: CI and release workflows pin Flutter 3.47.2; long browser journeys run separately from deterministic unit/widget tests.
 Trigger: Read when adding tests, fixing CI, changing widgets with complex layout, or editing GitHub Actions.
 Expiry: Revise when the CI Flutter version and browser/e2e strategy are pinned and stable.
 
@@ -10,7 +10,7 @@ Keep `flutter test` deterministic:
 - Prefer service/model tests for business logic.
 - Keep widget tests short and screen-scoped.
 - Avoid giant multi-screen journeys in `flutter test`.
-- Put full browser workflows in Patrol/Playwright/e2e lanes.
+- Put full browser workflows in the separate integration-test release lane.
 - Disable runtime Google Fonts fetching in tests via `test/flutter_test_config.dart`.
 
 ## Current Coverage Shape
@@ -34,7 +34,7 @@ If these flows need coverage again, rebuild them as:
 
 ## Test Design Rules
 
-- Use fake services instead of Firebase network calls.
+- Use fake services in unit/widget tests; use only local demo Firebase emulators in the separate browser/rules release lane.
 - Use synthetic PDF text and bytes unless testing a local gated fixture.
 - Avoid assertions that depend on text wrapping or font metrics.
 - Prefer `find.byKey` for critical controls in new tests.
