@@ -248,6 +248,89 @@ service cloud.firestore {
         && (links.size() < 4 || validFundDrp(links[3]));
     }
 
+    function workspaceGeneration(uid) {
+      let path = /databases/$(database)/documents/users/$(uid)/tax_workspace_metadata/current;
+      return exists(path) ? get(path).data.generation : 0;
+    }
+    function workspaceAdvanced(uid) {
+      return getAfter(/databases/$(database)/documents/users/$(uid)/tax_workspace_metadata/current).data.generation == workspaceGeneration(uid) + 1;
+    }
+    function yearUnlocked(uid, year) {
+      let path = /databases/$(database)/documents/users/$(uid)/tax_years/$(year);
+      return !exists(path) || get(path).data.status == 'draft';
+    }
+    function validWorkspacePeriod(p) {
+      return p is map && p.keys().hasOnly(['start','endExclusive','classification','evidence','reviewed'])
+        && p.start is string && p.start.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && p.endExclusive is string && p.endExclusive.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && p.start < p.endExclusive && p.classification in ['resident','foreign','temporary','unknown']
+        && p.evidence is string && p.evidence.size() <= 1000 && p.reviewed is bool
+        && (!p.reviewed || p.evidence.size() > 0);
+    }
+    function workspaceMoney(v) { return v is string && v.size() <= 100 && v.matches('^[0-9]+(\\.[0-9]{1,2})?$'); }
+    function validI1Review(p) {
+      return p is map && p.keys().hasOnly(['date','assetReference','marketValue','costBase','reducedCostBase','classification','election','evidence','adviserReference','reviewed'])
+        && validString(p.assetReference,1000) && p.date is string && p.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && workspaceMoney(p.marketValue) && workspaceMoney(p.costBase) && workspaceMoney(p.reducedCostBase)
+        && p.classification in ['unknown','nonTAP','tapExcluded','preCGT','temporaryResident']
+        && p.election in ['undecided','recognise','deferAllEligible'] && p.reviewed is bool
+        && p.evidence is string && p.evidence.size() <= 1000 && p.adviserReference is string && p.adviserReference.size() <= 1000
+        && (!p.reviewed || (p.evidence.size()>0 && p.adviserReference.size()>0));
+    }
+    function workspaceEvidence(m,k) { let v=m.get(k,''); return v is string && v.size()<=1000; }
+    function workspacePrefill(m,k) { return workspaceMoney(m.get(k,'0')); }
+    function validWorkspace(data,uid,year) {
+      let periods=data.residencyPeriods;
+      let reviews=data.i1Reviews;
+      return data.keys().hasOnly(['schemaVersion','userId','yearStart','revision','status','amendmentReason','cgtSnapshotId','sectionStates','sectionEvidence','prefill','residencyPeriods','i1Reviews','updatedAt'])
+        && data.schemaVersion == 1 && data.userId == uid && data.yearStart is int && data.yearStart >= 1900 && data.yearStart <= 2199
+        && year == string(data.yearStart) && data.revision is int && data.revision > 0
+        && data.status in ['draft','finalised'] && data.amendmentReason is string && data.amendmentReason.size()<=1000
+        && data.cgtSnapshotId is string && data.cgtSnapshotId.size()<=1000 && data.updatedAt is timestamp
+        && data.sectionStates is map && data.sectionStates.keys().hasOnly(['salary','interest','dividends','funds','rental','capitalGains','otherIncome','deductions','offsets'])
+        && data.sectionStates.values().hasOnly(['notStarted','documentsMissing','imported','needsReview','reconciled','notApplicable'])
+        && data.sectionEvidence is map && data.sectionEvidence.keys().hasOnly(['salary','interest','dividends','funds','rental','capitalGains','otherIncome','deductions','offsets'])
+        && data.prefill is map && data.prefill.keys().hasOnly(['salaryIncome','interestIncome','dividendIncome','fundAustralianIncome','fundForeignIncome','rentalIncome','rentalDeductions','rentalNet','netCapitalGain','otherIncome','deductions','frankingCredits','foreignTaxOffset','otherOffsets','withholding'])
+        && (data.sectionEvidence.size()==0 || (true
+        && workspaceEvidence(data.sectionEvidence,'salary')
+        && workspaceEvidence(data.sectionEvidence,'interest')
+        && workspaceEvidence(data.sectionEvidence,'dividends')
+        && workspaceEvidence(data.sectionEvidence,'funds')
+        && workspaceEvidence(data.sectionEvidence,'rental')
+        && workspaceEvidence(data.sectionEvidence,'capitalGains')
+        && workspaceEvidence(data.sectionEvidence,'otherIncome')
+        && workspaceEvidence(data.sectionEvidence,'deductions')
+        && workspaceEvidence(data.sectionEvidence,'offsets')
+        ))
+        && periods is list && periods.size()<=4 && reviews is list && reviews.size()<=4
+        && (periods.size()<1 || validWorkspacePeriod(periods[0])) && (periods.size()<2 || validWorkspacePeriod(periods[1]))
+        && (periods.size()<3 || validWorkspacePeriod(periods[2])) && (periods.size()<4 || validWorkspacePeriod(periods[3]))
+;
+    }
+    function validWorkspacePrefill(p) {
+      let values=p.get('salaryIncome','0') + '|' + p.get('interestIncome','0') + '|' + p.get('dividendIncome','0') + '|' + p.get('fundAustralianIncome','0') + '|' + p.get('fundForeignIncome','0') + '|' + p.get('rentalIncome','0') + '|' + p.get('rentalDeductions','0') + '|' + p.get('netCapitalGain','0') + '|' + p.get('otherIncome','0') + '|' + p.get('deductions','0') + '|' + p.get('frankingCredits','0') + '|' + p.get('foreignTaxOffset','0') + '|' + p.get('otherOffsets','0') + '|' + p.get('withholding','0');
+      return values.size()<=1400 && values.matches('^[0-9]+(\\.[0-9]{1,2})?(\\|[0-9]+(\\.[0-9]{1,2})?){13}$')
+        && p.get('rentalNet','0') is string && p.get('rentalNet','0').size()<=100 && p.get('rentalNet','0').matches('^-?[0-9]+(\\.[0-9]{1,2})?$');
+    }
+    function validWorkspaceI1(data) {
+      let reviews=data.i1Reviews;
+      return (reviews.size()<1 || validI1Review(reviews[0])) && (reviews.size()<2 || validI1Review(reviews[1]))
+        && (reviews.size()<3 || validI1Review(reviews[2])) && (reviews.size()<4 || validI1Review(reviews[3]))
+        && validWorkspacePrefill(data.prefill)
+        ;
+    }
+    function validWorkspaceItem(data,uid,year) {
+      return data.keys().hasOnly(['schemaVersion','userId','yearStart','category','sourceReference','amount','deductions','withholding','frankingCredits','taxOffset','rentalRecordId','rentalFingerprint','ownershipPercent','isReviewed','isVoided','revision','updatedAt'])
+        && data.schemaVersion==1 && data.userId==uid && data.yearStart is int && year==string(data.yearStart)
+        && data.category in ['salary','interest','dividends','otherIncome','deductions','offsets','rentalReview']
+        && validString(data.sourceReference,1000) && workspaceMoney(data.amount) && workspaceMoney(data.deductions)
+        && workspaceMoney(data.withholding) && workspaceMoney(data.frankingCredits) && workspaceMoney(data.taxOffset)
+        && data.rentalRecordId is string && data.rentalRecordId.size()<=1000 && data.rentalFingerprint is string && data.rentalFingerprint.size()<=1000
+        && data.ownershipPercent is string && data.ownershipPercent.matches('^(100(\\.0{1,12})?|[1-9][0-9]?(\\.[0-9]{1,12})?|0\\.[0-9]{1,12})$') && data.ownershipPercent.matches('.*[1-9].*')
+        && (data.category!='rentalReview' || (validString(data.rentalRecordId,1000) && validString(data.rentalFingerprint,1000) && data.amount=='0' && data.deductions=='0' && data.withholding=='0' && data.frankingCredits=='0' && data.taxOffset=='0')) && data.isReviewed is bool && data.isVoided is bool
+        && data.revision is int && data.revision>0 && data.updatedAt is timestamp;
+    }
+
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId)
@@ -255,9 +338,72 @@ service cloud.firestore {
       allow delete: if false;
 
       match /tax_records/{recordId} {
-        allow read, delete: if isOwner(userId);
-        allow create, update: if isOwner(userId)
-          && validTaxRecord(request.resource.data, userId);
+        allow read: if isOwner(userId);
+        allow delete: if isOwner(userId) && workspaceAdvanced(userId) && yearUnlocked(userId, resource.data.financialYear.split('-')[0]);
+        allow create: if isOwner(userId) && workspaceAdvanced(userId) && yearUnlocked(userId, request.resource.data.financialYear.split('-')[0]) && validTaxRecord(request.resource.data, userId);
+        allow update: if isOwner(userId) && workspaceAdvanced(userId) && yearUnlocked(userId, resource.data.financialYear.split('-')[0]) && yearUnlocked(userId, request.resource.data.financialYear.split('-')[0]) && validTaxRecord(request.resource.data, userId);
+      }
+
+      match /tax_workspace_metadata/{metadataId} {
+        allow read: if isOwner(userId);
+        allow create,update: if isOwner(userId) && metadataId=='current' && request.resource.data.keys().hasOnly(['generation']) && request.resource.data.generation is int && request.resource.data.generation == workspaceGeneration(userId)+1;
+        allow delete: if false;
+      }
+      match /tax_years/{yearId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && request.resource.data.revision==1
+          && validWorkspace(request.resource.data,userId,yearId) && request.resource.data.status=='draft' && workspaceAdvanced(userId)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/revisions/1).data == request.resource.data;
+        allow update: if isOwner(userId) && request.resource.data.revision==resource.data.revision+1
+          && validWorkspace(request.resource.data,userId,yearId) && workspaceAdvanced(userId)
+          && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/revisions/$(request.resource.data.revision)).data == request.resource.data
+          && ((resource.data.status=='draft' && (request.resource.data.status=='draft' ||
+              getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/snapshots/$(request.resource.data.revision)).data.workspaceRevision == request.resource.data.revision))
+            || (resource.data.status=='finalised' && request.resource.data.status=='draft' && validString(request.resource.data.amendmentReason,1000)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','amendmentReason','revision','updatedAt'])));
+        allow delete: if false;
+        match /revisions/{revisionId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && revisionId==string(request.resource.data.revision) && validWorkspaceI1(request.resource.data)
+            && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data==request.resource.data;
+          allow update,delete: if false;
+        }
+        match /items/{itemId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && get(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft' && validWorkspaceItem(request.resource.data,userId,yearId)
+            && request.resource.data.revision==1 && workspaceAdvanced(userId)
+            && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/items/$(itemId)/revisions/1).data==request.resource.data;
+          allow update: if isOwner(userId) && get(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft' && validWorkspaceItem(request.resource.data,userId,yearId)
+            && request.resource.data.revision==resource.data.revision+1 && request.resource.data.category==resource.data.category && request.resource.data.sourceReference==resource.data.sourceReference && workspaceAdvanced(userId)
+            && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/items/$(itemId)/revisions/$(request.resource.data.revision)).data==request.resource.data;
+          allow delete: if false;
+          match /revisions/{revisionId} {
+            allow read: if isOwner(userId);
+            allow create: if isOwner(userId) && revisionId==string(request.resource.data.revision)
+              && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/items/$(itemId)).data==request.resource.data;
+            allow update,delete: if false;
+          }
+        }
+        match /snapshots/{snapshotId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && request.resource.data.keys().hasOnly(['schemaVersion','kind','userId','yearStart','workspaceRevision','workspaceGeneration','investmentGeneration','createdAt','payload'])
+            && request.resource.data.schemaVersion==1 && request.resource.data.userId==userId && yearId==string(request.resource.data.yearStart)
+            && snapshotId==string(request.resource.data.workspaceRevision) && request.resource.data.kind=='finalised' && request.resource.data.workspaceGeneration==workspaceGeneration(userId)+1
+            && request.resource.data.investmentGeneration==ledgerGeneration(userId) && request.resource.data.createdAt is timestamp
+            && request.resource.data.payload is map && request.resource.data.payload.report is map && request.resource.data.payload.report.canFinalise==true
+            && request.resource.data.payload.report.workspaceGeneration==request.resource.data.workspaceGeneration
+            && request.resource.data.payload.report.investmentGeneration==request.resource.data.investmentGeneration
+            && validString(request.resource.data.payload.sourceFingerprint,64) && request.resource.data.payload.sourceFingerprint==request.resource.data.payload.report.sourceFingerprint
+            && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='finalised'
+            && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.revision==request.resource.data.workspaceRevision && workspaceAdvanced(userId);
+          allow create: if isOwner(userId) && yearUnlocked(userId,yearId)
+            && exists(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId))
+            && request.resource.data.keys().hasOnly(['schemaVersion','kind','userId','yearStart','createdAt','payload'])
+            && request.resource.data.schemaVersion==1 && request.resource.data.kind=='imported'
+            && request.resource.data.userId==userId && yearId==string(request.resource.data.yearStart)
+            && snapshotId.matches('^imported-[a-f0-9]{64}$') && request.resource.data.createdAt is timestamp && request.resource.data.payload is map;
+          allow update,delete: if false;
+        }
       }
 
       match /settings/{settingId} {

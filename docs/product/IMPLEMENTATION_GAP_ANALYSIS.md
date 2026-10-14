@@ -226,8 +226,8 @@ The supplied Markdown is preserved byte-for-byte as the product baseline. This c
 | Functional design review | Done for scoped Phase 1/2 | Historical AUD worksheet, manual fund review, explicit AMIT/DRP evidence and exclusions are recorded in the implementation notes; broader legal/production review remains outstanding |
 | Phase 1A-D investment foundation | Done (scoped implementation) | See implementation note for exact delivered scope, four-parcel boundary and verification; review/release pending |
 | Phase 2A-C fund/AMIT/DRP ledger | Done (scoped implementation) | See [Phase 2 implementation](PHASE_2_IMPLEMENTATION.md) for manual review, historical AMIT, DRP links, reconciliation and release boundaries |
-| Phase 3A residency | Not started | Independent classification, valuation and election review |
-| Phase 3B-C workspace/reconciliation/export | Not started | Reviewed source contributions and finalisation rules |
+| Phase 3A residency | Done (review workflow) | Evidenced timeline/I1 records and provisional scenarios; special legal outcomes remain review-gated |
+| Phase 3B-C workspace/reconciliation/export | Done (scoped implementation) | See [Phase 3 implementation](PHASE_3_IMPLEMENTATION.md) for source totals, prefill checks, amendments, backups and deployment requirements |
 | Optional AI convenience | Not started | Deterministic foundation first; no paid service approved |
 
 Update this table with actual PR links and verification evidence as implementation proceeds. A documentation publication does not change implementation status.

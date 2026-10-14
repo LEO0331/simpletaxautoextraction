@@ -103,10 +103,14 @@ class FirestoreService {
     if (!saveAsNewYear &&
         normalizedRecord.id != null &&
         normalizedRecord.id!.isNotEmpty) {
-      await colRef.doc(normalizedRecord.id).set({
-        ...normalizedRecord.copyWith(financialYear: financialYear).toMap(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await _writeRentalRecord(
+        normalizedRecord.userId,
+        colRef.doc(normalizedRecord.id),
+        {
+          ...normalizedRecord.copyWith(financialYear: financialYear).toMap(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      );
       return SaveTaxRecordResult(
         documentId: normalizedRecord.id!,
         replacedExistingYear: false,
@@ -128,10 +132,10 @@ class FirestoreService {
 
     if (duplicate.docs.isNotEmpty && !saveAsNewYear) {
       final existingDoc = duplicate.docs.first;
-      await existingDoc.reference.set({
+      await _writeRentalRecord(normalizedRecord.userId, existingDoc.reference, {
         ...normalizedRecord.copyWith(financialYear: financialYear).toMap(),
         'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      });
       return SaveTaxRecordResult(
         documentId: existingDoc.id,
         replacedExistingYear: true,
@@ -139,7 +143,7 @@ class FirestoreService {
     }
 
     final newDoc = colRef.doc();
-    await newDoc.set({
+    await _writeRentalRecord(normalizedRecord.userId, newDoc, {
       ...normalizedRecord
           .copyWith(id: newDoc.id, financialYear: financialYear)
           .toMap(),
@@ -268,13 +272,67 @@ class FirestoreService {
         }, SetOptions(merge: true));
   }
 
+  Future<void> _writeRentalRecord(
+    String userId,
+    DocumentReference<Map<String, dynamic>> recordRef,
+    Map<String, dynamic> data,
+  ) async {
+    final user = _db.collection('users').doc(userId);
+    final metadata = user.collection('tax_workspace_metadata').doc('current');
+    final year = (data['financialYear'] as String).split('-').first;
+    await _db.runTransaction((transaction) async {
+      final state = await transaction.get(metadata);
+      final existing = await transaction.get(recordRef);
+      final previousYear = (existing.data()?['financialYear'] as String?)
+          ?.split('-')
+          .first;
+      if (previousYear != null && previousYear != year) {
+        final previous = await transaction.get(
+          user.collection('tax_years').doc(previousYear),
+        );
+        if (previous.data()?['status'] == 'finalised') {
+          throw StateError(
+            'Amend the original finalised tax year before moving rental records.',
+          );
+        }
+      }
+      final workspace = await transaction.get(
+        user.collection('tax_years').doc(year),
+      );
+      if (workspace.data()?['status'] == 'finalised') {
+        throw StateError(
+          'Amend the finalised tax year before changing rental records.',
+        );
+      }
+      transaction.set(recordRef, data, SetOptions(merge: true));
+      transaction.set(metadata, {
+        'generation': (state.data()?['generation'] as int? ?? 0) + 1,
+      });
+    });
+  }
+
   Future<void> deleteTaxRecord(String userId, String recordId) async {
-    await _db
-        .collection('users')
-        .doc(userId)
-        .collection('tax_records')
-        .doc(recordId)
-        .delete();
+    final user = _db.collection('users').doc(userId);
+    final recordRef = user.collection('tax_records').doc(recordId);
+    final metadata = user.collection('tax_workspace_metadata').doc('current');
+    await _db.runTransaction((transaction) async {
+      final record = await transaction.get(recordRef);
+      final state = await transaction.get(metadata);
+      if (!record.exists) return;
+      final year = (record.data()!['financialYear'] as String).split('-').first;
+      final workspace = await transaction.get(
+        user.collection('tax_years').doc(year),
+      );
+      if (workspace.data()?['status'] == 'finalised') {
+        throw StateError(
+          'Amend the finalised tax year before deleting rental records.',
+        );
+      }
+      transaction.delete(recordRef);
+      transaction.set(metadata, {
+        'generation': (state.data()?['generation'] as int? ?? 0) + 1,
+      });
+    });
   }
 
   Future<String> saveInvestmentTransaction(
@@ -855,6 +913,27 @@ class FirestoreService {
       });
     });
     return ref.id;
+  }
+
+  Future<Map<String, dynamic>?> getInvestmentCalculationSnapshotOnce(
+    String userId,
+    String id,
+  ) async {
+    final doc = await _db
+        .collection('users')
+        .doc(userId)
+        .collection('investment_calculation_snapshots')
+        .doc(id)
+        .get();
+    if (!doc.exists) return null;
+    final data = doc.data()!;
+    if (data['createdAt'] is Timestamp) {
+      data['createdAt'] = (data['createdAt'] as Timestamp)
+          .toDate()
+          .toUtc()
+          .toIso8601String();
+    }
+    return {'id': doc.id, ...data};
   }
 
   Future<List<Map<String, dynamic>>> getInvestmentCalculationSnapshotsOnce(

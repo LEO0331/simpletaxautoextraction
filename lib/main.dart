@@ -12,6 +12,7 @@ import 'screens/investment_cgt_result_screen.dart';
 import 'screens/investment_cgt_routes.dart';
 import 'screens/investment_ledger_screen.dart';
 import 'screens/managed_fund_statement_screen.dart';
+import 'screens/tax_workspace_screen.dart';
 import 'screens/investment_transaction_list_screen.dart';
 import 'screens/investment_transaction_upload_screen.dart';
 
@@ -63,6 +64,7 @@ class MyApp extends StatelessWidget {
             const InvestmentCgtCalculationSetupScreen(),
         InvestmentCgtRoutes.ledger: (_) => const InvestmentLedgerScreen(),
         InvestmentCgtRoutes.funds: (_) => const ManagedFundStatementScreen(),
+        '/tax-years': (_) => const TaxWorkspaceScreen(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == InvestmentCgtRoutes.results) {

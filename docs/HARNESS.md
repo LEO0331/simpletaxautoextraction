@@ -44,6 +44,7 @@ Read only the document relevant to the current task.
 | Task type | Read |
 | --- | --- |
 | Adding or changing Investment CGT features | [Investment CGT Harness](harness/investment-cgt.md) |
+| Tax-year workpapers, residency review, finalisation or backups | [Tax Workspace Harness](harness/tax-workspace.md) |
 | Editing PDF extraction or parser logic | [PDF Parsing Harness](harness/pdf-parsing.md) |
 | Firestore, auth, rules, Firebase console hardening | [Firebase Security Harness](harness/firebase-security.md) |
 | Writing or fixing tests and CI failures | [Testing Harness](harness/testing.md) |

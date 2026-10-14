@@ -9,6 +9,7 @@
 - [Phase 1 implementation](product/PHASE_1_IMPLEMENTATION.md) - delivered scope, usage, migration, security and verification.
 - [Phase 2 implementation](product/PHASE_2_IMPLEMENTATION.md) - reviewed fund statements, historical AMIT adjustments, DRP links and reconciliation.
 - [Managed-fund PDF import](product/MANAGED_FUND_PDF_PARSING.md) - local page selection, specimen adapters and mandatory review.
+- [Phase 3 implementation](product/PHASE_3_IMPLEMENTATION.md) - residency review, yearly reconciliation, finalisation and workpaper backups.
 
 The v1.0 plan describes proposed scope; the implementation note records delivered coverage. Neither establishes verified personal tax results or a complete tax-law implementation.
 
