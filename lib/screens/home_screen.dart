@@ -445,6 +445,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Tax-year workspace',
+            icon: const Icon(Icons.calendar_month),
+            onPressed: () => Navigator.pushNamed(context, '/tax-years'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),

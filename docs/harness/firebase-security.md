@@ -24,6 +24,10 @@ Current collections:
 - `users/{userId}/settings/mappings`
 - `users/{userId}/investment_transactions/{transactionId}`
 - `users/{userId}/managed_fund_statements/{statementId}` and immutable `revisions/{revision}`
+- `users/{userId}/tax_years/{startYear}` with immutable configuration/item revisions and final/imported snapshots
+- `users/{userId}/tax_workspace_metadata/current` generation
+
+Phase 3 rental writes/deletes must atomically advance workspace generation and respect finalised-year locks. Finalised workspaces only reopen via a reasoned amendment. Workspace parent and mandatory history writes jointly validate the complete nested schema; do not remove one half. See [tax workspace harness](tax-workspace.md) for load/export/finalisation and backup invariants.
 
 Managed fund parent writes validate statement fields, components and adjustment slices. The mandatory matching immutable revision write validates DRP links. Both checks must succeed atomically for identical facts; preserve this paired validation when changing rules to avoid the Firestore expression limit. Statement changes must advance the shared investment ledger generation. Client calculation saves additionally check statement revision references; server rules do not certify numerical tax results.
 

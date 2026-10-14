@@ -294,6 +294,82 @@ def main():
     commit([write('managed_fund_statements/boundary-create', created_boundary),
         write('managed_fund_statements/boundary-create/revisions/1', created_boundary),
         write('investment_metadata/ledger', {'generation': 14})])
+    workspace = {'schemaVersion': 1, 'userId': 'owner', 'yearStart': 2024,
+        'revision': 1, 'status': 'draft', 'amendmentReason': '', 'cgtSnapshotId': '',
+        'sectionStates': {}, 'sectionEvidence': {}, 'prefill': {},
+        'residencyPeriods': [], 'i1Reviews': [], 'updatedAt': NOW}
+    def workspace_writes(data, generation):
+        return [write('tax_years/2024', data),
+            write(f"tax_years/2024/revisions/{data['revision']}", data),
+            write('tax_workspace_metadata/current', {'generation': generation})]
+    commit(workspace_writes(workspace, 1))
+    request('GET', f'/v1/{BASE}/users/owner/tax_years/2024', uid='other', expected=403)
+    request('GET', f'/v1/{BASE}/users/owner/tax_years/2024', uid=None, expected=403)
+    commit([write('tax_years/2024/revisions/1', workspace)], expected=403)
+    item = {'schemaVersion': 1, 'userId': 'owner', 'yearStart': 2024,
+        'revision': 1, 'category': 'salary', 'sourceReference': 'Synthetic salary',
+        'amount': '1000', 'deductions': '0', 'withholding': '10', 'frankingCredits': '0',
+        'taxOffset': '0', 'rentalRecordId': '', 'rentalFingerprint': '',
+        'ownershipPercent': '100', 'isReviewed': True, 'isVoided': False, 'updatedAt': NOW}
+    def item_writes(data, generation):
+        return [write('tax_years/2024/items/salary', data),
+            write(f"tax_years/2024/items/salary/revisions/{data['revision']}", data),
+            write('tax_workspace_metadata/current', {'generation': generation})]
+    fractional_share=dict(item,sourceReference='Synthetic fractional ownership',ownershipPercent='33.3333')
+    commit(item_writes(item,2)+[write('tax_years/2024/items/fractional',fractional_share),write('tax_years/2024/items/fractional/revisions/1',fractional_share)])
+    for bad_share in ['0.000000000000','100.000000000001','101','33.3333333333333','1|2']:
+        bad=dict(fractional_share,revision=2,ownershipPercent=bad_share)
+        commit([write('tax_years/2024/items/fractional',bad),write('tax_years/2024/items/fractional/revisions/2',bad),write('tax_workspace_metadata/current',{'generation':3})],expected=403)
+    malformed = dict(item, revision=2, amount=4)
+    commit(item_writes(malformed, 3), expected=403)
+    commit([write('tax_years/2024/items/salary', dict(item, revision=2))], expected=403)
+    invalid_workspace = dict(workspace, revision=2, sectionEvidence={'salary': 123})
+    commit(workspace_writes(invalid_workspace, 3), expected=403)
+    invalid_workspace = dict(workspace, revision=2, prefill={'salaryIncome': '1|2'})
+    commit(workspace_writes(invalid_workspace, 3), expected=403)
+    invalid_workspace = dict(workspace, revision=2, prefill={'salaryIncome':123})
+    commit(workspace_writes(invalid_workspace, 3), expected=403)
+    invalid_workspace = dict(workspace, revision=2, i1Reviews=[{'date':'2025-01-01','assetReference':'Synthetic asset','marketValue':'1|2','costBase':'0','reducedCostBase':'0','classification':'nonTAP','election':'recognise','evidence':'','adviserReference':'','reviewed':False}])
+    commit(workspace_writes(invalid_workspace, 3), expected=403)
+    final = dict(workspace, revision=2, status='finalised')
+    snapshot = {'schemaVersion':1, 'userId':'owner', 'yearStart':2024,
+        'kind':'finalised', 'workspaceRevision':2, 'workspaceGeneration':3, 'investmentGeneration':14,
+        'createdAt':NOW, 'payload':{'sourceFingerprint':'a'*64, 'report':{'canFinalise':True, 'workspaceGeneration':3,'investmentGeneration':14,'sourceFingerprint':'a'*64}, 'sources':{}}}
+    commit(workspace_writes(final, 3), expected=403)
+    stale = dict(snapshot, investmentGeneration=13)
+    commit(workspace_writes(final, 3)+[write('tax_years/2024/snapshots/2', stale)], expected=403)
+    commit(workspace_writes(final, 3)+[write('tax_years/2024/snapshots/2', snapshot)])
+    locked_rental = {'userId':'owner','financialYear':'2024-2025','propertyId':'synthetic','propertyName':'Synthetic rental','income':{},'expenses':{},'notes':'','isLocked':False,'sourceFileName':None,'sourceParser':None,'parserVersion':'v1','lineItems':[],'createdAt':NOW,'updatedAt':NOW}
+    commit([write('tax_records/locked-year',locked_rental), write('tax_workspace_metadata/current',{'generation':4})],expected=403)
+    commit(item_writes(dict(item, revision=2), 4), expected=403)
+    commit([write('tax_years/2024/snapshots/2', snapshot)], expected=403)
+    amend = dict(final, revision=3, status='draft', amendmentReason='Synthetic correction')
+    commit(workspace_writes(dict(amend, prefill={'salaryIncome':'4'}), 4), expected=403)
+    commit(workspace_writes(dict(amend, amendmentReason=''), 4), expected=403)
+    commit(workspace_writes(amend, 4))
+    commit(item_writes(dict(item, revision=2, isVoided=True), 5))
+    boundary = dict(amend, revision=4)
+    boundary['residencyPeriods'] = [{'start':'2024-07-01','endExclusive':'2025-07-01',
+        'classification':'resident','evidence':'Synthetic residency','reviewed':True} for _ in range(4)]
+    boundary['i1Reviews'] = [{'date':'2025-01-01','assetReference':'Synthetic asset',
+        'marketValue':'100','costBase':'90','reducedCostBase':'90','classification':'nonTAP',
+        'election':'recognise','evidence':'Synthetic evidence','adviserReference':'Synthetic adviser',
+        'reviewed':True} for _ in range(4)]
+    boundary['sectionEvidence'] = {k:'Synthetic source evidence' for k in ['salary','interest','dividends','funds','rental','capitalGains','otherIncome','deductions','offsets']}
+    boundary['prefill'] = {k:'100' for k in ['salaryIncome','interestIncome','dividendIncome','fundAustralianIncome','fundForeignIncome','rentalIncome','rentalDeductions','rentalNet','netCapitalGain','otherIncome','deductions','frankingCredits','foreignTaxOffset','otherOffsets','withholding']}
+    commit(workspace_writes(boundary, 6))
+    commit(workspace_writes(dict(boundary, revision=5, residencyPeriods=boundary['residencyPeriods']+[boundary['residencyPeriods'][0]]), 7), expected=403)
+    rental = {'userId':'owner','financialYear':'2024-2025','propertyId':'synthetic',
+        'propertyName':'Synthetic rental','income':{},'expenses':{},'notes':'', 'isLocked':False,
+        'sourceFileName':None,'sourceParser':None,'parserVersion':'v1','lineItems':[],
+        'createdAt':NOW,'updatedAt':NOW}
+    commit([write('tax_records/rental', rental)], expected=403)
+    commit([write('tax_records/rental', rental), write('tax_workspace_metadata/current', {'generation':7})])
+    imported={'schemaVersion':1,'kind':'imported','userId':'owner','yearStart':2024,'createdAt':NOW,'payload':{'synthetic':'historical workpaper'}}
+    commit([write('tax_years/2024/snapshots/imported-'+'b'*64,imported)])
+    commit([write('tax_years/2024/snapshots/imported-'+'b'*64,imported)],expected=403)
+    commit([write('tax_years/2024/snapshots/imported-'+'c'*64,dict(imported,userId='other'))],expected=403)
+    print('PASS: tax workspaces owner isolation, typed schemas, revisions, finalise/amend locks, stale sources, rental generation and four-period boundary')
     print('PASS: managed fund ownership, typed schema, correction history, generation and immutable voids')
     print('PASS: real Firestore emulator ownership, schema, locks, revisions, generation, immutable snapshots and 4-parcel allocation boundary')
 

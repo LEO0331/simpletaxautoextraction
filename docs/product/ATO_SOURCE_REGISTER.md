@@ -1,6 +1,6 @@
 # Tax source register
 
-Version 1.1 - accessed/reviewed for architecture and scoped Phase 1/2 implementation on 13 October 2026. These references support historical worksheet rules, not a certified or complete taxpayer-specific ruleset. See [Phase 2 scope](PHASE_2_IMPLEMENTATION.md) for implemented rules and exclusions. The supplied plan's historical links remain unchanged; this register records their limits.
+Version 1.2 - accessed/reviewed for architecture and scoped Phase 1–3 implementation on 13–14 October 2026. These references support historical workpapers, not a certified or complete taxpayer-specific ruleset. See [Phase 2 scope](PHASE_2_IMPLEMENTATION.md) and [Phase 3 scope](PHASE_3_IMPLEMENTATION.md) for implemented review workflows and exclusions. The supplied plan's historical links remain unchanged; this register records their limits.
 
 | ID | Source / topic | Access and applicability | Implementation gate |
 |---|---|---|---|
@@ -23,3 +23,5 @@ Scoped Phase 1/2 coverage includes reviewed ordinary AUD acquisition/disposal fe
 Phase 2 research update: July 2026 legislative text re-retrieved for ss 104-107A/B. Indexed ATO Part C and LCR 2015/11 guidance rechecked for attributed gain gross-up; full-page access failed. [TD 2000/3](https://www.ato.gov.au/law/view/view.htm?docid=TXD%2FTD20003%2FNAT%2FATO%2F00001) indexed guidance checked for reinvested acquisition cost. See the Phase 2 note for applicability limits.
 
 Change log: 2026-10-13 - initial register distinguishes retrieved, indexed-only and unverified sources; functional rule approval remains outstanding.
+
+Phase 3 update: 2026-10-14 — ss 104-160/104-165 re-retrieved for I1 timing, valuation comparison, specified exceptions and all-eligible-asset election review. Residency classification and automatic special-case tax outcomes remain unapproved. Yearly aggregation, prefill comparison and finalisation are workpaper functions, not a tax-liability or lodgment engine.
