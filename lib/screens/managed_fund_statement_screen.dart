@@ -2,20 +2,25 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../models/managed_fund_statement.dart';
 import '../models/investment_transaction.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/managed_fund_pdf_service.dart';
+import '../services/parsers/managed_fund_statement_parser.dart';
 
-/// Reviewed manual entry; private source documents remain outside the app.
+/// Reviewed manual/local PDF drafts; original documents are never uploaded.
 class ManagedFundStatementScreen extends StatefulWidget {
   final AuthService? authService;
   final FirestoreService? firestoreService;
+  final ManagedFundPdfService? pdfService;
   const ManagedFundStatementScreen({
     super.key,
     this.authService,
     this.firestoreService,
+    this.pdfService,
   });
 
   @override
@@ -31,6 +36,7 @@ class _ManagedFundStatementScreenState
   StreamSubscription<dynamic>? _authChanges;
   List<ManagedFundStatement> _statements = [];
   bool _loading = true;
+  bool _importing = false;
   String? _error;
 
   @override
@@ -80,7 +86,10 @@ class _ManagedFundStatementScreenState
     }
   }
 
-  Future<void> _edit([ManagedFundStatement? statement]) async {
+  Future<void> _edit([
+    ManagedFundStatement? statement,
+    ManagedFundExtractionResult? extraction,
+  ]) async {
     if (!_signedIn) return;
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -89,10 +98,78 @@ class _ManagedFundStatementScreenState
           auth: _auth,
           store: _store,
           statement: statement,
+          extraction: extraction,
         ),
       ),
     );
     if (mounted && _signedIn) await _load();
+  }
+
+  Future<void> _importPdf() async {
+    if (!_signedIn || _importing) return;
+    setState(() => _importing = true);
+    final pages = TextEditingController();
+    try {
+      final selected = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+        withData: true,
+      );
+      if (!mounted || !_signedIn || selected == null) return;
+      final bytes = selected.files.single.bytes;
+      if (bytes == null || bytes.isEmpty || bytes.length > 10 * 1024 * 1024) {
+        throw const FormatException();
+      }
+      final range = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Select annual statement pages'),
+          content: TextField(
+            key: const Key('fund-pdf-pages'),
+            controller: pages,
+            decoration: const InputDecoration(
+              labelText: 'PDF pages, e.g. 1-2 or 3',
+              helperText:
+                  'Include summary and components of ONE statement. Up to five pages. Blank uses the whole PDF.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const Key('parse-fund-pdf'),
+              onPressed: () => Navigator.pop(context, pages.text.trim()),
+              child: const Text('Extract locally'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || !_signedIn || range == null) return;
+      int? first, last;
+      if (range.isNotEmpty) {
+        final match = RegExp(r'^(\d+)(?:\s*-\s*(\d+))?$').firstMatch(range);
+        if (match == null) throw const FormatException();
+        first = int.parse(match[1]!);
+        last = int.parse(match[2] ?? match[1]!);
+      }
+      final extraction = await (widget.pdfService ?? ManagedFundPdfService())
+          .extract(bytes, userId: _owner!, firstPage: first, lastPage: last);
+      if (!mounted || !_signedIn) return;
+      await _edit(extraction.draft, extraction);
+    } catch (_) {
+      if (mounted && _signedIn) {
+        setState(
+          () => _error =
+              'Unable to extract these pages. Select one statement (up to five pages, PDF under 10 MB) or enter it manually.',
+        );
+      }
+    } finally {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      pages.dispose();
+      if (mounted) setState(() => _importing = false);
+    }
   }
 
   @override
@@ -132,6 +209,16 @@ class _ManagedFundStatementScreenState
                 'Enter the reviewed annual statement for each fund, account and financial year. Keep private PDFs locally. Corrections preserve earlier revisions and invalidate calculations.',
               ),
               const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('import-fund-pdf'),
+                onPressed: _importing ? null : _importPdf,
+                icon: const Icon(Icons.picture_as_pdf),
+                label: Text(
+                  _importing
+                      ? 'Extracting locally…'
+                      : 'Import fund statement PDF (local)',
+                ),
+              ),
               const Text(
                 'This is an estimate only and does not constitute tax advice. Please confirm with a qualified accountant or tax adviser.',
               ),
@@ -188,11 +275,13 @@ class _StatementEditor extends StatefulWidget {
   final AuthService auth;
   final FirestoreService store;
   final ManagedFundStatement? statement;
+  final ManagedFundExtractionResult? extraction;
   const _StatementEditor({
     required this.owner,
     required this.auth,
     required this.store,
     this.statement,
+    this.extraction,
   });
   @override
   State<_StatementEditor> createState() => _StatementEditorState();
@@ -223,7 +312,7 @@ class _StatementEditorState extends State<_StatementEditor> {
       'accountNumber': s?.accountNumber ?? '',
       'issuer': s?.issuer ?? '',
       'layoutVersion': s?.layoutVersion ?? '',
-      'yearStart': '${s?.yearStart ?? 2025}',
+      'yearStart': s?.yearStart == 0 ? '' : '${s?.yearStart ?? 2025}',
       'sourceReference': s?.sourceReference ?? '',
     };
     for (final e in initial.entries) {
@@ -529,7 +618,7 @@ class _StatementEditorState extends State<_StatementEditor> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: Text(
-        widget.statement == null
+        widget.statement?.id == null
             ? 'Add annual fund statement'
             : 'Correct annual fund statement',
       ),
@@ -539,29 +628,47 @@ class _StatementEditorState extends State<_StatementEditor> {
         : ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (widget.statement != null)
+              if (widget.extraction != null) ...[
+                const Text(
+                  'PDF extraction draft — review required. The original PDF remains on this device.',
+                ),
+                for (final warning in widget.extraction!.warnings)
+                  Text(warning),
+                Text(
+                  'Enter or explicitly confirm missing fields: ${widget.extraction!.missingFields.join(', ')}',
+                ),
+                ExpansionTile(
+                  title: const Text('Extracted field locations'),
+                  children: [
+                    for (final reference
+                        in widget.extraction!.fieldEvidence.values)
+                      Text(reference),
+                  ],
+                ),
+              ],
+              if (widget.statement?.id != null)
                 Text(
                   'Current revision ${widget.statement!.revision}. Saving a correction retains the previous facts.',
                 ),
               _field(
                 'ticker',
                 'Fund ticker',
-                enabled: widget.statement == null,
+                enabled: widget.statement?.id == null,
               ),
               _field(
                 'accountNumber',
                 'Account reference',
-                enabled: widget.statement == null,
+                enabled: widget.statement?.id == null,
               ),
               _field(
                 'issuer',
                 'Statement issuer',
-                enabled: widget.statement == null,
+                enabled: widget.statement?.id == null,
               ),
               _field(
                 'yearStart',
                 'Financial year start (e.g. 2025 for 2025–2026)',
-                enabled: widget.statement == null,
+                enabled: widget.statement?.id == null,
               ),
               _field('layoutVersion', 'Issuer statement layout / version'),
               _field(
@@ -695,7 +802,7 @@ class _StatementEditorState extends State<_StatementEditor> {
                   'I checked issuer, year, all components, allocation evidence and linked DRP acquisitions against the source.',
                 ),
               ),
-              if (widget.statement != null)
+              if (widget.statement?.id != null)
                 CheckboxListTile(
                   key: const Key('fund-voided'),
                   value: _voided,
@@ -730,12 +837,12 @@ class _StatementEditorState extends State<_StatementEditor> {
                       : 'Save unreviewed draft',
                 ),
               ),
-              if (widget.statement != null)
+              if (widget.statement?.id != null)
                 OutlinedButton(
                   onPressed: _history,
                   child: const Text('View immutable revision history'),
                 ),
-              if (widget.statement != null)
+              if (widget.statement?.id != null)
                 ExpansionTile(
                   title: const Text('Current source and component audit'),
                   children: [

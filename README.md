@@ -116,7 +116,9 @@ lib/
 
 Phase 1 adds a separate realised investment ledger and annual CGT worksheet. Review BUY/SELL facts, select specific acquisition parcels, track remaining units, apply reviewed annual losses and save immutable calculation snapshots. The existing unrealised estimator remains separate. See [Phase 1 usage and boundaries](docs/product/PHASE_1_IMPLEMENTATION.md).
 
-Phase 2 adds reviewed annual fund statements, dated AMIT parcel adjustments, separate E10 gains, DRP links to existing acquisitions and combined annual CGT reconciliation. Corrections retain immutable history and invalidate current worksheets. Private PDFs remain outside Git and the app. See [Phase 2 usage and boundaries](docs/product/PHASE_2_IMPLEMENTATION.md).
+Phase 2 adds reviewed annual fund statements, dated AMIT parcel adjustments, separate E10 gains, DRP links to existing acquisitions and combined annual CGT reconciliation. Corrections retain immutable history and invalidate current worksheets. Private PDFs remain local and outside Git. See [Phase 2 usage and boundaries](docs/product/PHASE_2_IMPLEMENTATION.md).
+
+Fund PDFs can now be selected and parsed locally into an unreviewed draft. Choose one statement's pages from a combined pack; inspect missing fields and column mappings before saving. Initial specimen adapters cover iShares and Betashares AMMA statements. See [PDF import coverage](docs/product/MANAGED_FUND_PDF_PARSING.md).
 
 The initial worksheet is limited to supported ordinary AUD resident-individual scenarios in FY2024-2025/FY2025-2026 and four parcels per sale. Fund/residency/special-event gaps require review. Publish the updated Firestore rules before releasing this client. Confidential PDFs are parsed locally and kept out of Git; public tests use synthetic data.
 
