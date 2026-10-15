@@ -23,11 +23,17 @@ class _BrokerCsvImportScreenState extends State<BrokerCsvImportScreen> {
   bool _aud = false, _busy = false;
   final Set<int> _saved = {};
   StreamSubscription<dynamic>? _subscription;
+  MaterialPageRoute<InvestmentTransaction>? _reviewRoute;
+  String? _owner;
   @override
   void initState() {
     super.initState();
-    _subscription = _auth.authStateChanges.listen((_) {
-      if (mounted) {
+    _owner = _auth.currentUser?.uid;
+    _subscription = _auth.authStateChanges.listen((user) {
+      if (mounted && user?.uid != _owner) {
+        _owner = user?.uid;
+        final route = _reviewRoute;
+        if (route?.isActive == true) route!.navigator?.removeRoute(route);
         setState(() {
           _drafts = [];
           _saved.clear();
@@ -91,15 +97,16 @@ class _BrokerCsvImportScreenState extends State<BrokerCsvImportScreen> {
   Future<void> _review(int i) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null || uid != _uid || _busy) return;
-    final tx = await Navigator.push<InvestmentTransaction>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => InvestmentTransactionReviewScreen(
-          userId: uid,
-          extraction: _drafts[i],
-        ),
+    final extraction = _drafts[i];
+    final route = MaterialPageRoute<InvestmentTransaction>(
+      builder: (_) => InvestmentTransactionReviewScreen(
+        userId: uid,
+        extraction: extraction,
       ),
     );
+    _reviewRoute = route;
+    final tx = await Navigator.of(context).push(route);
+    if (identical(_reviewRoute, route)) _reviewRoute = null;
     if (tx == null || _auth.currentUser?.uid != uid || !mounted) return;
     setState(() => _busy = true);
     try {

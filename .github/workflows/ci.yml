@@ -47,6 +47,7 @@ jobs:
           task_emulator_pid=$!
           trap 'kill "$task_emulator_pid"' EXIT
           python3 scripts/test_firestore_rules.py
+          python3 scripts/test_capacity_rules.py
 
   browser-release:
     runs-on: ubuntu-latest

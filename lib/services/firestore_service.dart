@@ -1,6 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import '../models/investment_ledger.dart';
+import '../models/corporate_action_decision.dart';
+import '../models/tax_workspace.dart';
+import 'investment_event_service.dart';
+import 'tax_workspace_service.dart';
 import '../models/managed_fund_statement.dart';
 import '../models/tax_decimal.dart';
 import '../utils/source_fingerprint.dart';
@@ -42,6 +46,18 @@ class FirestoreService {
 
   FirestoreService({FirebaseFirestore? db})
     : _db = db ?? FirebaseFirestore.instance;
+
+  Future<List<CorporateActionDecision>> getCorporateActionsOnce(String uid) =>
+      InvestmentEventService(db: _db).getCorporateActions(uid);
+  Future<List<CorporateActionDecision>> getAllCorporateActionsOnce(
+    String uid,
+  ) => InvestmentEventService(db: _db).getAllCorporateActions(uid);
+  Future<TaxWorkspace?> getTaxWorkspaceOnce(String uid, int year) =>
+      TaxWorkspaceService(db: _db).getWorkspace(uid, year);
+  Future<int> getTaxWorkspaceGeneration(String uid) =>
+      TaxWorkspaceService(db: _db).getGeneration(uid);
+  Stream<int> watchTaxWorkspaceGeneration(String uid) =>
+      TaxWorkspaceService(db: _db).watchGeneration(uid);
 
   TaxRecord _normalizeTaxRecordForWrite(TaxRecord record) {
     final propertyId = record.propertyId.trim().isEmpty
@@ -599,7 +615,7 @@ class FirestoreService {
       if (!includeVoided && doc.data()['isVoided'] == true) continue;
       statements.add(
         ManagedFundStatement.fromMap(
-          await _hydrateFund(userId, doc.data()),
+          await _hydrateFund(userId, doc.data(), subjectId: doc.id),
           id: doc.id,
         ),
       );
@@ -609,12 +625,13 @@ class FirestoreService {
 
   Future<Map<String, dynamic>> _hydrateFund(
     String userId,
-    Map<String, dynamic> data,
-  ) async {
+    Map<String, dynamic> data, {
+    required String subjectId,
+  }) async {
     if (data['schemaVersion'] != 2) return data;
     final records = await RevisionDetailStore(
       db: _db,
-    ).read(userId, data, family: 'fund');
+    ).read(userId, data, family: 'fund', subjectId: subjectId);
     if (records.any(
       (r) => !{'fundAdjustment', 'fundDrp'}.contains(r['kind']),
     )) {
@@ -683,6 +700,7 @@ class FirestoreService {
       );
       final trial = InvestmentParcelLedger().replay(
         transactions: facts,
+        corporateActions: await getCorporateActionsOnce(statement.userId),
         allocations: allocations,
         statements: [
           ...previousStatements.where(
@@ -703,7 +721,11 @@ class FirestoreService {
     final comparison = Map<String, dynamic>.from(source)..remove('revision');
     final before = await ref.get();
     final previous = before.exists
-        ? await _hydrateFund(statement.userId, before.data()!)
+        ? await _hydrateFund(
+            statement.userId,
+            before.data()!,
+            subjectId: identity,
+          )
         : null;
     if (previous != null) {
       previous.remove('revision');
@@ -783,7 +805,11 @@ class FirestoreService {
         .get();
     final result = <Map<String, dynamic>>[];
     for (final doc in revisions.docs) {
-      final data = await _hydrateFund(userId, doc.data());
+      final data = await _hydrateFund(
+        userId,
+        doc.data(),
+        subjectId: statementId,
+      );
       result.add({
         ...data,
         'id': doc.id,
@@ -882,6 +908,7 @@ class FirestoreService {
     }
     final trial = InvestmentParcelLedger().replay(
       transactions: facts,
+      corporateActions: await getCorporateActionsOnce(userId),
       statements: statements
           .where((statement) => statement.isReviewed)
           .toList(),
@@ -1047,8 +1074,40 @@ class FirestoreService {
         throw StateError('Fund statements changed. Recalculate the worksheet.');
       }
     }
+    final actionRevisions = Map<String, dynamic>.from(
+      snapshot['corporateActionRevisions'] as Map? ?? {},
+    );
+    for (final entry in actionRevisions.entries) {
+      final action = await user
+          .collection('investment_events')
+          .doc(entry.key)
+          .get();
+      if (!action.exists ||
+          action.data()?['revision'] != entry.value ||
+          action.data()?['isVoided'] == true) {
+        throw StateError(
+          'Corporate actions changed. Recalculate the worksheet.',
+        );
+      }
+    }
+    final i1Reviews =
+        (snapshot['snapshot'] as Map?)?['i1Reviews'] as List? ?? [];
+    if (i1Reviews.isNotEmpty && snapshot['workspaceGeneration'] is! int) {
+      throw StateError('I1 snapshots require a current workspace generation.');
+    }
     await _db.runTransaction((tx) async {
       final metadata = await tx.get(_ledgerMetadata(userId));
+      if (snapshot.containsKey('workspaceGeneration')) {
+        final workspaceMeta = await tx.get(
+          user.collection('tax_workspace_metadata').doc('current'),
+        );
+        if (snapshot['workspaceGeneration'] !=
+            (workspaceMeta.data()?['generation'] ?? 0)) {
+          throw StateError(
+            'Residency workpapers changed. Recalculate the worksheet.',
+          );
+        }
+      }
       if (snapshot['ledgerGeneration'] !=
           (metadata.data()?['generation'] ?? 0)) {
         throw StateError(

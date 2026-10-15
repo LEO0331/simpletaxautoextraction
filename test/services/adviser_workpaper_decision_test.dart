@@ -62,6 +62,37 @@ void main() {
       );
     },
   );
+  test(
+    'Prefill compares effective adviser totals while preserving other blockers',
+    () {
+      final accepted = applyAdviserWorkpaperDecision(
+        baseReport: report(['Prefill mismatch for netCapitalGain']),
+        decision: decision(covered: []),
+        currentScopeFingerprint: hash,
+        prefill: {'netCapitalGain': '75.005'},
+      );
+      expect(accepted.canFinalise, isTrue);
+      final mismatch = applyAdviserWorkpaperDecision(
+        baseReport: report([]),
+        decision: decision(covered: []),
+        currentScopeFingerprint: hash,
+        prefill: {'netCapitalGain': '100'},
+      );
+      expect(mismatch.issues, contains('Prefill mismatch for netCapitalGain'));
+      expect(mismatch.canFinalise, isFalse);
+      final blocked = applyAdviserWorkpaperDecision(
+        baseReport: report([
+          'Required documents are missing',
+          'Prefill mismatch for netCapitalGain',
+        ]),
+        decision: decision(covered: []),
+        currentScopeFingerprint: hash,
+        prefill: {'netCapitalGain': '75.005'},
+      );
+      expect(blocked.issues, contains('Required documents are missing'));
+      expect(blocked.canFinalise, isFalse);
+    },
+  );
   test('Missing evidence and unreviewed source facts cannot be waived', () {
     for (final issue in [
       'salary: Source has not been reviewed',

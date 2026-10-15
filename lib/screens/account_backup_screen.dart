@@ -223,7 +223,7 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'Recovery requires the same owner and an empty account dataset. Sources reopen as unreviewed drafts. Original allocations, I1 decisions and final reports remain accessible as historical evidence; review and recalculate before finalising.',
+                  'Recovery requires the same owner and an empty account dataset. Sources reopen as unreviewed drafts and document evidence needs review. Original parcel selections, corporate actions, I1 and adviser decisions, and final reports remain accessible as historical evidence; review and recalculate before finalising.',
                 ),
                 const SizedBox(height: 16),
                 Wrap(

@@ -16,10 +16,16 @@ Without Make (including Windows), replace `make e2e-web` with `flutter drive --d
 
 The config binds Auth to 127.0.0.1:9099 and Firestore to 127.0.0.1:8186. The demo project has no production resources. Do not substitute a production project. Tests create only synthetic values; PDFs and tax records are not used. Existing application dependencies remain unchanged. CLI/browser tooling is installed under ignored `build/release-tools` in CI.
 
-For rules-only checks, run `python3 scripts/test_firestore_rules.py` against the local Firestore emulator. The script resets its demo database, so run it before browser tests rather than concurrently.
+For rules-only checks, run `python3 scripts/test_firestore_rules.py` followed by `python3 scripts/test_capacity_rules.py` against the local Firestore emulator. Each script resets its demo database, so run them sequentially before browser tests. The capacity suite publishes twelve parcels, twelve fund adjustments and twelve residency periods, and a structured archive larger than 1 MB. It also verifies stale generation rejection, typed staged rows, immutable publication, owner isolation, document inventory, corporate event history and recovery evidence.
 
 ## Production boundary
 
 Local emulator verification proves the checked-in rules and application workflow, not that a particular live Firebase deployment contains those rules. `python3 scripts/verify_public_release.py` checks the public Pages landing page, exact base path and build assets without signing in; deployment runs it after publishing. No production account, production writes, Firebase rule deployment, PR creation, or merge is part of these tests. The repository owner creates and merges the PR and deploys the reviewed rules alongside the client.
 
 Official setup references: [Flutter browser integration testing](https://docs.flutter.dev/testing/integration-tests), [Auth emulator](https://firebase.google.com/docs/emulator-suite/connect_auth), and [Firestore emulator](https://firebase.google.com/docs/emulator-suite/connect_firestore).
+
+## Verified locally on 15 October 2026
+
+The genuine Firestore emulator passed both the legacy regression suite and the expanded capacity/domain suite. Real headless Chrome passed login, reviewed section and source persistence, stale-source reload, financial-year switching, sign-out data clearing, re-login, document inventory persistence and logout. The test preserves Flutter's error handler and asserts that no framework errors occurred. Source persistence and completion of the asynchronous reload are awaited before checking a lazily rendered source row.
+
+The release web build and WebAssembly compatibility dry run passed with `/simpletaxautoextraction/` as the base path. The public Pages landing and JavaScript asset checks passed read-only. Production Firebase rules were not changed or verified by these local tests.

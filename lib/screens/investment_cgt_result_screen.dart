@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/investment_cgt_calculation.dart';
 import '../models/investment_transaction.dart';
+import '../models/corporate_action_decision.dart';
 import '../models/investment_ledger.dart';
 import '../models/managed_fund_statement.dart';
 import '../services/investment_cgt_calculator.dart';
@@ -13,6 +14,7 @@ class InvestmentCgtResultArgs {
   final DateTime cutOffDate;
   final Map<String, double> tickerPrices;
   final List<InvestmentTransaction> transactions;
+  final List<CorporateActionDecision> corporateActions;
   final List<SaleAllocation> allocations;
   final List<ManagedFundStatement> statements;
 
@@ -20,6 +22,7 @@ class InvestmentCgtResultArgs {
     required this.cutOffDate,
     required this.tickerPrices,
     required this.transactions,
+    this.corporateActions = const [],
     this.allocations = const [],
     this.statements = const [],
   });
@@ -38,6 +41,7 @@ class InvestmentCgtResultScreen extends StatelessWidget {
       cutOffDate: args.cutOffDate,
       tickerPrices: args.tickerPrices,
       transactions: args.transactions,
+      corporateActions: args.corporateActions,
       allocations: args.allocations,
       statements: args.statements,
     );

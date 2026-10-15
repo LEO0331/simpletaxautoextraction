@@ -1,6 +1,6 @@
 # Personal Australian Tax Workspace — Phase 0 assessment
 
-Assessment date: 13 October 2026, Asia/Taipei. Scope: repository audit, authoritative-source research, architecture, migration and acceptance planning. Sections 1-12 are the pre-Phase-1 assessment at commit 985c684; their code references and gap statements describe that baseline. See [Phase 1 implementation](PHASE_1_IMPLEMENTATION.md) for current delivered coverage. This companion records implementation proposals and code evidence; the supplied [v1.0 product plan](PERSONAL_AU_TAX_WORKSPACE_PLAN.md) remains unchanged. Its embedded kickoff instructions are reference material, not independent authorisation. Documentation consolidation, commit and push were subsequently requested by the user.
+Assessment date: 13 October 2026, Asia/Taipei. Scope: repository audit, authoritative-source research, architecture, migration and acceptance planning. Sections 1-12 are the pre-Phase-1 assessment at commit 985c684; their code references and gap statements describe that baseline. See [current implementation status](REMAINING_WORK_IMPLEMENTATION.md) for the subsequent release, coverage, capacity and recovery work. This companion records implementation proposals and code evidence; the supplied [v1.0 product plan](PERSONAL_AU_TAX_WORKSPACE_PLAN.md) remains unchanged. Its embedded kickoff instructions are reference material, not independent authorisation. Documentation consolidation, commit and push were subsequently requested by the user.
 
 **1. Recommendation and smallest useful milestone**
 
@@ -210,7 +210,7 @@ The supplied Markdown is preserved byte-for-byte as the product baseline. This c
 
 | Topic | Difference between inputs | Consolidated approach |
 |---|---|---|
-| Phase labels | Original request combines residency and annual workspace in Phase 3; Markdown splits P3 workspace and P4 residency; checklist has additional stages | Retain original Phase 1/2/3 grouping for execution. Phase 3A residency corresponds to Markdown P4; Phase 3B/C workspace/reconciliation corresponds to P3. P5 optional AI follows the deterministic foundation |
+| Phase labels | Original request combines residency and annual workspace in Phase 3; Markdown splits P3 workspace and P4 residency; checklist has additional stages | Retain original Phase 1/2/3 grouping for execution. Phase 3A residency corresponds to Markdown P4; Phase 3B/C workspace/reconciliation corresponds to P3. The user subsequently excluded P5 optional AI |
 | Residency timing | Full workflows are later, but a target year's treatment may already depend on a transition | Phase 1 contains a review/completeness guard; no automatic resident assumption. Full timeline/election implementation remains later |
 | Tax-ready status | Inputs use Ready for review and Ready for tax return | Keep these distinct: reviewer readiness does not certify return readiness. Missing statements or unresolved legal facts block the latter |
 | Holdings evidence | Broker annual summaries exist as an evidence family, but do not prove complete parcels | Reconcile opening units + purchases + DRP + corporate-action changes - disposals to closing holdings; retain Missing/Insufficient states |
@@ -219,19 +219,25 @@ The supplied Markdown is preserved byte-for-byte as the product baseline. This c
 | Extraction | Some layouts show encoding/reading-order problems | Keep format-specific parsers and structured manual fallback; text extraction success alone does not validate amounts |
 | Future-year rules | Baseline links include historical ATO guidance | Use the source register and effective dates; unsupported years remain NeedsTaxReview rather than inheriting a timeless discount |
 
-| Milestone | Status as of 2026-10-13 | Evidence / next gate |
+| Milestone | Current status | Evidence / next gate |
 |---|---|---|
 | Phase 0 repository audit and design proposal | Done | Sections 1-12; baseline strict analysis and 118 test passes |
 | Phase 0 documentation consolidation | Done | Supplied baseline plus this synthesis, requirements and source register; documentation links/privacy checks |
 | Functional design review | Done for scoped Phase 1/2 | Historical AUD worksheet, manual fund review, explicit AMIT/DRP evidence and exclusions are recorded in the implementation notes; broader legal/production review remains outstanding |
-| Phase 1A-D investment foundation | Done (scoped implementation) | See implementation note for exact delivered scope, four-parcel boundary and verification; review/release pending |
+| Phase 1A-D investment foundation | Done (scoped implementation) | See Phase 1 note for the original implementation. The subsequent capacity work replaces its four-parcel boundary; current release evidence is tracked separately |
 | Phase 2A-C fund/AMIT/DRP ledger | Done (scoped implementation) | See [Phase 2 implementation](PHASE_2_IMPLEMENTATION.md) for manual review, historical AMIT, DRP links, reconciliation and release boundaries |
 | Phase 3A residency | Done (review workflow) | Evidenced timeline/I1 records and provisional scenarios; special legal outcomes remain review-gated |
 | Phase 3B-C workspace/reconciliation/export | Done (scoped implementation) | See [Phase 3 implementation](PHASE_3_IMPLEMENTATION.md) for source totals, prefill checks, amendments, backups and deployment requirements |
-| Optional AI convenience | Not started | Deterministic foundation first; no paid service approved |
+| Release verification | Done (local verification) | 339 tests, strict analysis, genuine legacy/capacity rules, real Chrome integration, final web release build and public read-only asset check passed; production deployment remains owner-controlled |
+| Document coverage and capacity | Done (scoped implementation) | [Remaining-work implementation](REMAINING_WORK_IMPLEMENTATION.md); exact evidence inventory and linked detail sets; checked-in rules verification does not prove production deployment |
+| Accountant exports and full-account recovery | Done (scoped implementation) | Exact CSV/PDF workpapers and owner-scoped backup/recovery; restored financial facts require review |
+| Historical and special-case extensions | Done (scoped implementation) | Year-start registry 2020–2025, non-AMIT E4, evidenced splits/FX and explicit adviser decisions; automatic complex/future tax treatment remains excluded |
+| Optional AI convenience | Excluded by user | No AI service, paid model dependency or automatic legal determination is part of this work |
 
 Update this table with actual PR links and verification evidence as implementation proceeds. A documentation publication does not change implementation status.
 
 Change log: 2026-10-13 - retained supplied v1.0 baseline; consolidated repository findings and useful pack requirements; recorded phase differences and unresolved decisions; excluded private evidence and local paths.
 
 Implementation update: 2026-10-13 - Phase 1 implemented on an isolated branch following user authorisation; original assessment retained as historical evidence. No private PDFs or taxpayer fixtures added.
+
+Implementation update: 2026-10-15 - retained the original assessment and unchanged v1.0 plan; linked the current remaining-work implementation record. The user authorised the remaining deterministic work and explicitly excluded optional AI. Current integration and verification results supersede historical capacity and coverage limits only where recorded in that companion.

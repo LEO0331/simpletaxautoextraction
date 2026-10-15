@@ -26,6 +26,7 @@ void main() {
       fundStatements: [],
       cgtSnapshots: [],
       report: report,
+      adviserScopeFingerprint: 'synthetic-scope',
       workspaceGeneration: 1,
       investmentGeneration: 1,
       investmentHistoryStart: null,

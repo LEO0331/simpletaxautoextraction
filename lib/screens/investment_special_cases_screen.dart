@@ -13,7 +13,15 @@ import '../utils/source_fingerprint.dart';
 import 'investment_transaction_review_screen.dart';
 
 class InvestmentSpecialCasesScreen extends StatefulWidget {
-  const InvestmentSpecialCasesScreen({super.key});
+  final AuthService? authService;
+  final FirestoreService? firestoreService;
+  final InvestmentEventService? eventService;
+  const InvestmentSpecialCasesScreen({
+    super.key,
+    this.authService,
+    this.firestoreService,
+    this.eventService,
+  });
   @override
   State<InvestmentSpecialCasesScreen> createState() =>
       _InvestmentSpecialCasesScreenState();
@@ -21,9 +29,12 @@ class InvestmentSpecialCasesScreen extends StatefulWidget {
 
 class _InvestmentSpecialCasesScreenState
     extends State<InvestmentSpecialCasesScreen> {
-  final _auth = AuthService(),
-      _store = FirestoreService(),
-      _events = InvestmentEventService();
+  late final AuthService _auth;
+  late final FirestoreService _store;
+  late final InvestmentEventService _events;
+  DialogRoute<dynamic>? _dialogRoute;
+  MaterialPageRoute<InvestmentTransaction>? _reviewRoute;
+  String? _owner;
   List<InvestmentTransaction> _buys = [];
   List<CorporateActionDecision> _actions = [];
   StreamSubscription<dynamic>? _subscription;
@@ -31,9 +42,18 @@ class _InvestmentSpecialCasesScreenState
   @override
   void initState() {
     super.initState();
+    _auth = widget.authService ?? AuthService();
+    _store = widget.firestoreService ?? FirestoreService();
+    _events = widget.eventService ?? InvestmentEventService();
+    _owner = _auth.currentUser?.uid;
     _load();
-    _subscription = _auth.authStateChanges.listen((_) {
-      if (!mounted) return;
+    _subscription = _auth.authStateChanges.listen((user) {
+      if (!mounted || user?.uid == _owner) return;
+      _owner = user?.uid;
+      final dialog = _dialogRoute;
+      if (dialog?.isActive == true) dialog!.navigator?.removeRoute(dialog);
+      final review = _reviewRoute;
+      if (review?.isActive == true) review!.navigator?.removeRoute(review);
       setState(() {
         _buys = [];
         _actions = [];
@@ -70,6 +90,24 @@ class _InvestmentSpecialCasesScreenState
     }
   }
 
+  Future<T?> _showDialog<T>({
+    required BuildContext context,
+    required WidgetBuilder builder,
+  }) async {
+    final route = DialogRoute<T>(context: context, builder: builder);
+    _dialogRoute = route;
+    try {
+      final result = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
+      await route.completed;
+      return result;
+    } finally {
+      if (identical(_dialogRoute, route)) _dialogRoute = null;
+    }
+  }
+
   Future<void> _split([CorporateActionDecision? old]) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
@@ -79,7 +117,7 @@ class _InvestmentSpecialCasesScreenState
         evidence = TextEditingController(text: old?.evidenceReference);
     String? parcel = old?.parcelId;
     bool reviewed = old?.reviewed ?? false;
-    final result = await showDialog<CorporateActionDecision>(
+    final result = await _showDialog<CorporateActionDecision>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, set) => AlertDialog(
@@ -189,7 +227,7 @@ class _InvestmentSpecialCasesScreenState
     final fields = [for (var i = 0; i < 9; i++) TextEditingController()];
     fields[0].text = 'USD';
     bool reviewed = false, forex = false;
-    final result = await showDialog<ForeignCurrencyConversion>(
+    final result = await _showDialog<ForeignCurrencyConversion>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, set) => AlertDialog(
@@ -323,15 +361,15 @@ class _InvestmentSpecialCasesScreenState
       ],
       rawText: '',
     );
-    final trade = await Navigator.push<InvestmentTransaction>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => InvestmentTransactionReviewScreen(
-          userId: uid,
-          extraction: extraction,
-        ),
+    final route = MaterialPageRoute<InvestmentTransaction>(
+      builder: (_) => InvestmentTransactionReviewScreen(
+        userId: uid,
+        extraction: extraction,
       ),
     );
+    _reviewRoute = route;
+    final trade = await Navigator.of(context).push(route);
+    if (identical(_reviewRoute, route)) _reviewRoute = null;
     if (trade == null || _auth.currentUser?.uid != uid) return;
     try {
       final duplicate = await _store.findInvestmentDuplicate(uid, trade);

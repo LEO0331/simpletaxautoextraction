@@ -1,4 +1,4 @@
-import 'tax_rule_registry.dart';
+import 'adviser_workpaper_decision_service.dart';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -22,6 +22,7 @@ class TaxWorkspaceBundle {
   final List<ManagedFundStatement> fundStatements;
   final List<Map<String, dynamic>> cgtSnapshots;
   final TaxWorkspaceReport report;
+  final String adviserScopeFingerprint;
   final int workspaceGeneration, investmentGeneration;
   final DateTime? investmentHistoryStart;
   final bool hasCapitalActivity;
@@ -34,6 +35,7 @@ class TaxWorkspaceBundle {
     required this.fundStatements,
     required this.cgtSnapshots,
     required this.report,
+    required this.adviserScopeFingerprint,
     required this.workspaceGeneration,
     required this.investmentGeneration,
     required this.investmentHistoryStart,
@@ -69,6 +71,7 @@ class TaxWorkspaceCoordinator {
       includeVoided: true,
     );
     final allocations = await sources.getInvestmentAllocationsOnce(uid);
+    final corporateActions = await sources.getCorporateActionsOnce(uid);
     final snapshots = await sources.getInvestmentCalculationSnapshotsOnce(uid);
     Map<String, dynamic>? selected;
     if (workspace.cgtSnapshotId.isNotEmpty) {
@@ -87,19 +90,43 @@ class TaxWorkspaceCoordinator {
     }
     final earlier =
         (await workspaces.getWorkspaces(uid))
-            .where((w) => w.yearStart < yearStart && w.cgtSnapshotId.isNotEmpty)
+            .where(
+              (w) =>
+                  w.yearStart < yearStart &&
+                  (w.cgtSnapshotId.isNotEmpty || w.adjudication != null),
+            )
             .toList()
           ..sort((a, b) => b.yearStart.compareTo(a.yearStart));
     final priorIssues = <String>[];
     Map<String, dynamic>? anchor;
     if (earlier.isNotEmpty) {
       final prior = earlier.first;
-      final priorSnapshot = await sources.getInvestmentCalculationSnapshotOnce(
-        uid,
-        prior.cgtSnapshotId,
-      );
+      final priorSnapshot = prior.cgtSnapshotId.isEmpty
+          ? null
+          : await sources.getInvestmentCalculationSnapshotOnce(
+              uid,
+              prior.cgtSnapshotId,
+            );
       final annual = (priorSnapshot?['annualCgt'] as Map?) ?? priorSnapshot;
-      final closing = (annual?['snapshot'] as Map?)?['closingLossBalances'];
+      final priorBundle = prior.adjudication == null
+          ? null
+          : await load(uid, prior.yearStart);
+      final approvedAdviser =
+          priorBundle != null &&
+          priorBundle.report.canFinalise &&
+          prior.adjudication!.validation().isEmpty &&
+          prior.adjudication!.sourceFingerprint ==
+              priorBundle.adviserScopeFingerprint;
+      final closing = approvedAdviser
+          ? prior.adjudication!.closingLossBalances
+                .map(
+                  (b) => {
+                    'originStartYear': b.originStartYear,
+                    'remainingAmount': b.amount,
+                  },
+                )
+                .toList()
+          : (annual?['snapshot'] as Map?)?['closingLossBalances'];
       anchor = {
         'userId': uid,
         'yearStart': prior.yearStart,
@@ -107,15 +134,20 @@ class TaxWorkspaceCoordinator {
         'status': prior.status,
         'snapshotId': prior.cgtSnapshotId,
         'closingLossBalances': closing,
+        if (prior.adjudication != null)
+          'adjudication': prior.adjudication!.toMap(),
+        if (priorBundle != null)
+          'adviserScopeFingerprint': priorBundle.adviserScopeFingerprint,
       };
       if (prior.yearStart != yearStart - 1) {
         priorIssues.add(
           'Intervening capital-loss years require reviewed workpapers before losses can roll forward',
         );
       }
-      if (priorSnapshot?['ledgerGeneration'] != investmentGeneration ||
-          annual?['year'] != TaxYear(prior.yearStart).toString() ||
-          annual?['status'] != 'ReviewedWorksheet') {
+      if (!approvedAdviser &&
+          (priorSnapshot?['ledgerGeneration'] != investmentGeneration ||
+              annual?['year'] != TaxYear(prior.yearStart).toString() ||
+              annual?['status'] != 'ReviewedWorksheet')) {
         priorIssues.add(
           'Earlier capital-loss worksheet is stale or unsupported; recalculate and review it',
         );
@@ -125,7 +157,8 @@ class TaxWorkspaceCoordinator {
           'An earlier capital-loss year is under amendment; reconcile it before reviewing later losses',
         );
       }
-      if (closing is! List || priorSnapshot?['userId'] != uid) {
+      if (closing is! List ||
+          (!approvedAdviser && priorSnapshot?['userId'] != uid)) {
         priorIssues.add(
           'Earlier capital-loss worksheet lacks a matching structured closing balance',
         );
@@ -136,7 +169,9 @@ class TaxWorkspaceCoordinator {
             closing: true,
             maxOriginYear: prior.yearStart,
           );
-          if (selected == null && expected.isNotEmpty) {
+          if (selected == null &&
+              expected.isNotEmpty &&
+              workspace.adjudication == null) {
             priorIssues.add(
               'Prior capital losses require an annual CGT worksheet even with no current disposal',
             );
@@ -198,6 +233,7 @@ class TaxWorkspaceCoordinator {
       transactions: transactions,
       allocations: allocations,
       statements: funds,
+      corporateActions: corporateActions,
       asOfDate: DateTime.utc(yearStart + 1, 6, 30),
     );
     for (final observation in coverage.where(
@@ -215,6 +251,7 @@ class TaxWorkspaceCoordinator {
             transactions: transactions,
             allocations: allocations,
             statements: funds,
+            corporateActions: corporateActions,
             asOfDate: cutoff,
           ),
         ),
@@ -250,7 +287,7 @@ class TaxWorkspaceCoordinator {
           (t) => !t.isVoided && t.isSell && year.contains(t.tradeDate),
         ) ||
         ledger.fundGains.any((g) => year.contains(g.date));
-    final report = TaxWorkspaceCalculator().calculate(
+    final baseReport = TaxWorkspaceCalculator().calculate(
       workspace: workspace,
       items: items,
       rentals: rentals,
@@ -275,6 +312,9 @@ class TaxWorkspaceCoordinator {
                   .map((t) => {'id': t.id, ...t.toMap()})
                   .toList(),
               'allocations': allocations.map((a) => a.toMap()).toList(),
+              'corporateActions': corporateActions
+                  .map((a) => {'id': a.id, ...a.toMap()})
+                  .toList(),
               'cgtSnapshot': selected,
               'priorLossAnchor': anchor,
               'documentCoverage': coverage.map((r) => r.toMap()).toList(),
@@ -282,6 +322,8 @@ class TaxWorkspaceCoordinator {
             as Map,
       ),
     );
+    final scope = adviserScopeFingerprint(workspace, items, audit);
+    final report = _applyAdviser(baseReport, workspace, scope, audit);
     return TaxWorkspaceBundle(
       workspace: workspace,
       items: List.unmodifiable(items),
@@ -289,6 +331,7 @@ class TaxWorkspaceCoordinator {
       fundStatements: List.unmodifiable(funds),
       cgtSnapshots: List.unmodifiable(snapshots),
       report: report,
+      adviserScopeFingerprint: scope,
       workspaceGeneration: generation,
       investmentGeneration: investmentGeneration,
       investmentHistoryStart: historyStart,
@@ -330,7 +373,7 @@ class TaxWorkspaceCoordinator {
         .firstOrNull;
     // The finalisation write itself advances generation. Freeze the projection
     // of that committed state so a freshly finalised year is not immediately stale.
-    final report = TaxWorkspaceCalculator().calculate(
+    final baseReport = TaxWorkspaceCalculator().calculate(
       workspace: finalised,
       items: current.items,
       rentals: current.rentals,
@@ -341,6 +384,12 @@ class TaxWorkspaceCoordinator {
       investmentHistoryStart: current.investmentHistoryStart,
       hasCapitalActivity: current.hasCapitalActivity,
       investmentIssues: current.investmentIssues,
+    );
+    final report = _applyAdviser(
+      baseReport,
+      finalised,
+      current.adviserScopeFingerprint,
+      current.auditSources,
     );
     await workspaces.saveWorkspace(
       finalised,
@@ -442,7 +491,6 @@ class TaxWorkspaceCoordinator {
       );
       if (restored.userId != uid ||
           restored.yearStart != data['yearStart'] ||
-          !TaxRuleRegistry.supports(restored.yearStart) ||
           restored.validation().isNotEmpty) {
         throw const FormatException();
       }
@@ -507,7 +555,16 @@ class TaxWorkspaceCoordinator {
           .map((raw) => Map<String, dynamic>.from(raw as Map))
           .toList();
       final audit = Map<String, dynamic>.from(data['sources'] as Map);
-      final coreAudit = {...audit}..remove('documentCoverage');
+      final coreAudit = {...audit}
+        ..remove('documentCoverage')
+        ..remove('corporateActions');
+      if (audit.containsKey('corporateActions')) {
+        for (final event in audit['corporateActions'] as List) {
+          if (event is! Map || event['userId'] != uid) {
+            throw const FormatException();
+          }
+        }
+      }
       if (!_only(coreAudit, {
         'rentals',
         'fundStatements',
@@ -598,6 +655,7 @@ class TaxWorkspaceCoordinator {
         'revision': 0,
         'amendmentReason': restoreTag,
         'cgtSnapshotId': '',
+        'adjudication': null,
         'sectionStates': {
           for (final key in taxWorkspaceSections) key: 'needsReview',
         },
@@ -682,4 +740,59 @@ dynamic _jsonValue(dynamic value) {
   }
   if (value is List) return value.map(_jsonValue).toList();
   return value;
+}
+
+/// Saving an adviser decision changes neither its own scope nor its source hash.
+/// Source audit includes inventory, holdings events and prior-loss dependencies.
+String adviserScopeFingerprint(
+  TaxWorkspace workspace,
+  List<TaxWorkspaceItem> items,
+  Map<String, dynamic> audit,
+) {
+  final config = workspace.toMap()
+    ..remove('adjudication')
+    ..remove('status')
+    ..remove('revision')
+    ..remove('amendmentReason');
+  final facts = items.map((i) => {'id': i.id, ...i.toMap()}).toList()
+    ..sort(
+      (a, b) =>
+          canonicalTaxFingerprint(a).compareTo(canonicalTaxFingerprint(b)),
+    );
+  return canonicalTaxFingerprint({
+    'workspace': config,
+    'items': facts,
+    'sources': audit,
+  });
+}
+
+TaxWorkspaceReport _applyAdviser(
+  TaxWorkspaceReport base,
+  TaxWorkspace workspace,
+  String scope,
+  Map<String, dynamic> audit,
+) {
+  final result = workspace.adjudication == null
+      ? base
+      : applyAdviserWorkpaperDecision(
+          baseReport: base,
+          decision: workspace.adjudication!,
+          currentScopeFingerprint: scope,
+          currentYearStart: workspace.yearStart,
+          prefill: workspace.prefill,
+        );
+  return TaxWorkspaceReport(
+    categoryTotals: result.categoryTotals,
+    issues: result.issues,
+    sectionIssues: result.sectionIssues,
+    contributions: result.contributions,
+    i1Scenarios: result.i1Scenarios,
+    sourceFingerprint: canonicalTaxFingerprint({
+      'report': base.sourceFingerprint,
+      'sourceAudit': audit,
+    }),
+    canFinalise: result.canFinalise,
+    workspaceGeneration: result.workspaceGeneration,
+    investmentGeneration: result.investmentGeneration,
+  );
 }

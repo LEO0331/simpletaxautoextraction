@@ -6,6 +6,9 @@ import '../models/investment_transaction.dart';
 import '../models/managed_fund_statement.dart';
 import '../models/tax_record.dart';
 import '../models/tax_workspace.dart';
+import '../models/document_coverage.dart';
+import '../models/corporate_action_decision.dart';
+import 'document_coverage_service.dart';
 import 'firestore_service.dart';
 import 'tax_workspace_service.dart';
 
@@ -33,6 +36,8 @@ class AccountBackupService {
     'tax_workspace_metadata',
     'revision_details',
     'account_restores',
+    'document_coverage',
+    'investment_events',
   ];
   DocumentReference<Map<String, dynamic>> _user(String uid) =>
       db.collection('users').doc(uid);
@@ -125,6 +130,8 @@ class AccountBackupService {
             'investment_allocations',
             'managed_fund_statements',
             'tax_years',
+            'document_coverage',
+            'investment_events',
           ].contains(parts.first))
         'revisions',
       if (parts.length == 2 && parts.first == 'tax_years') ...[
@@ -189,8 +196,52 @@ class AccountBackupService {
       }
       for (final entry in byPath.entries) {
         final header = entry.value;
+        if (entry.key.split('/').length == 2 &&
+            entry.key.startsWith('document_coverage/')) {
+          final record = DocumentCoverage.fromMap(
+            header,
+            id: entry.key.split('/').last,
+          );
+          if (record.userId != uid || record.validation().isNotEmpty) {
+            throw const FormatException('Invalid document inventory evidence.');
+          }
+        }
+        if (entry.key.split('/').length == 2 &&
+            entry.key.startsWith('investment_events/')) {
+          final record = CorporateActionDecision.fromMap(
+            header,
+            id: entry.key.split('/').last,
+          );
+          if (record.userId != uid ||
+              record.validation().isNotEmpty ||
+              !byPath.containsKey(
+                'investment_transactions/${record.parcelId}',
+              )) {
+            throw const FormatException('Invalid corporate action evidence.');
+          }
+        }
         if (header.containsKey('detailSetId')) {
-          _details(header, byPath);
+          final parts = entry.key.split('/');
+          final family = parts.first == 'investment_allocations'
+              ? 'allocation'
+              : parts.first == 'managed_fund_statements'
+              ? 'fund'
+              : parts.first == 'tax_years' &&
+                    parts.length >= 4 &&
+                    parts[2] == 'snapshots'
+              ? 'archive'
+              : parts.first == 'tax_years'
+              ? 'workspace'
+              : null;
+          if (family == null) {
+            throw const FormatException('Unexpected detail parent.');
+          }
+          _details(
+            header,
+            byPath,
+            family: family,
+            subject: family == 'archive' ? parts[3] : parts[1],
+          );
         }
         if (entry.key.startsWith('properties/')) {
           if (header.keys.toSet().difference({
@@ -658,6 +709,12 @@ class AccountBackupService {
       } else if (path.startsWith('properties/') ||
           path.startsWith('settings/')) {
         result[path] = data;
+      } else if (path.startsWith('document_coverage/')) {
+        result[path] = {
+          ...data,
+          'revision': 0,
+          'state': data['state'] == 'missing' ? 'missing' : 'available',
+        };
       }
     }
     final logical = backup['logical'] as Map;
@@ -698,6 +755,7 @@ class AccountBackupService {
                 )
                 .toList(),
             i1Reviews: const [],
+            clearAdjudication: true,
           )
           .toMap();
       for (final rawItem in raw['items'] as List) {
@@ -744,6 +802,11 @@ class AccountBackupService {
         case 'tax_records':
           await investments.restoreRentalRecord(
             TaxRecord.fromMap(entry.value, parts[1]),
+          );
+        case 'document_coverage':
+          await DocumentCoverageService(db: db).save(
+            DocumentCoverage.fromMap(entry.value, id: parts[1]),
+            expectedRevision: 0,
           );
         case 'investment_transactions':
           final data = InvestmentTransaction.fromMap(entry.value, parts[1]);
@@ -797,8 +860,10 @@ class AccountBackupService {
 
   static List<Map<String, dynamic>> _details(
     Map<String, dynamic> header,
-    Map<String, Map<String, dynamic>> records,
-  ) {
+    Map<String, Map<String, dynamic>> records, {
+    String? family,
+    String? subject,
+  }) {
     final id = header['detailSetId'];
     final count = header['detailCount'];
     final manifest = records['revision_details/$id'];
@@ -807,9 +872,35 @@ class AccountBackupService {
         count < 0 ||
         manifest == null ||
         manifest['state'] != 'published' ||
+        manifest['userId'] != header['userId'] ||
+        (family != null && manifest['family'] != family) ||
+        (subject != null && manifest['subjectId'] != subject) ||
+        (header.containsKey('revision') &&
+            manifest['revision'] != header['revision']) ||
+        (header.containsKey('workspaceRevision') &&
+            manifest['revision'] != header['workspaceRevision']) ||
+        (header.containsKey('yearStart') &&
+            manifest['yearStart'] != header['yearStart']) ||
+        (header.containsKey('ticker') &&
+            manifest['ticker'] != header['ticker']) ||
+        (header.containsKey('accountNumber') &&
+            manifest['accountNumber'] != header['accountNumber']) ||
         manifest['count'] != count ||
         manifest['hash'] != header['detailHash']) {
       throw const FormatException('Missing or unpublished detail set.');
+    }
+    const kinds = {
+      'allocation': {'allocation'},
+      'fund': {'fundAdjustment', 'fundDrp'},
+      'workspace': {'residency', 'i1', 'adjudication', 'adjudicationLoss'},
+      'archive': {'archiveChunk'},
+    };
+    if (!kinds.containsKey(manifest['family']) ||
+        records.keys
+                .where((p) => p.startsWith('revision_details/$id/records/'))
+                .length !=
+            count) {
+      throw const FormatException('Invalid detail family or sequence.');
     }
     final result = <Map<String, dynamic>>[];
     for (var index = 0; index < count; index++) {
@@ -817,6 +908,12 @@ class AccountBackupService {
       if (value == null ||
           value['index'] != index ||
           value['kind'] is! String ||
+          !kinds[manifest['family']]!.contains(value['kind']) ||
+          value.keys.toSet().difference({
+            'index',
+            'kind',
+            'payload',
+          }).isNotEmpty ||
           value['payload'] is! Map) {
         throw const FormatException('Incomplete detail set.');
       }
@@ -834,7 +931,7 @@ class AccountBackupService {
     String family,
   ) {
     if (header['schemaVersion'] != 2) return header;
-    final details = _details(header, records);
+    final details = _details(header, records, family: family);
     final result = {...header, 'schemaVersion': 1}
       ..remove('detailSetId')
       ..remove('detailCount')
@@ -857,6 +954,21 @@ class AccountBackupService {
           .where((v) => v['kind'] == 'i1')
           .map((v) => v['payload'])
           .toList();
+      final decisions = details
+          .where((v) => v['kind'] == 'adjudication')
+          .toList();
+      final losses = details
+          .where((v) => v['kind'] == 'adjudicationLoss')
+          .toList();
+      if (decisions.length > 1 || (decisions.isEmpty && losses.isNotEmpty)) {
+        throw const FormatException('Invalid adviser detail sequence.');
+      }
+      if (decisions.isNotEmpty) {
+        result['adjudication'] = {
+          ...Map<String, dynamic>.from(decisions.single['payload'] as Map),
+          'closingLossBalances': losses.map((v) => v['payload']).toList(),
+        };
+      }
     }
     return result;
   }
@@ -884,6 +996,8 @@ class AccountBackupService {
                 'investment_allocations',
                 'managed_fund_statements',
                 'tax_years',
+                'document_coverage',
+                'investment_events',
               ].contains(p.first) ||
           p.first == 'tax_years' && ['items', 'snapshots'].contains(p[2]) ||
           ['revision_details', 'account_restores'].contains(p.first) &&

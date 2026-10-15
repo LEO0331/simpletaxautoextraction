@@ -15,6 +15,13 @@ void main() {
   testWidgets('real browser login, reviewed item, stale sources and signout', (
     tester,
   ) async {
+    final frameworkErrors = <String>[];
+    final originalErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      frameworkErrors.add(details.exceptionAsString());
+      originalErrorHandler?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = originalErrorHandler);
     await Firebase.initializeApp(
       options: const FirebaseOptions(
         apiKey: 'demo-local-only-key',
@@ -50,7 +57,9 @@ void main() {
           .whereType<String>()
           .take(25)
           .join(' | ');
-      fail('Timed out waiting for $target. Synthetic UI state: $visible');
+      fail(
+        'Timed out waiting for $target. Synthetic UI state: $visible. Framework errors: ${frameworkErrors.join(' | ')}',
+      );
     }
 
     await until(find.text('Welcome Back'));
@@ -102,6 +111,27 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('item-reviewed')));
     await tester.tap(find.byKey(const Key('item-reviewed')));
     await tester.tap(find.byKey(const Key('item-save')));
+    for (
+      var attempt = 0;
+      attempt < 100 && find.byKey(const Key('item-save')).evaluate().isNotEmpty;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 150));
+    }
+    expect(find.byKey(const Key('item-save')), findsNothing);
+    for (var attempt = 0; attempt < 100; attempt++) {
+      await tester.pump(const Duration(milliseconds: 150));
+      final persisted = await store.getItems(uid, 2025);
+      final reload = tester.widget<IconButton>(
+        find.byKey(const Key('workspace-reload')),
+      );
+      if (persisted.isNotEmpty && reload.onPressed != null) break;
+    }
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('workspace-add-item')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     await until(find.textContaining('Reviewed · amount 1234.56'));
     final items = await store.getItems(uid, 2025);
     expect(items.single.amount, '1234.56');
@@ -185,5 +215,6 @@ void main() {
     await tester.tap(find.byTooltip('Logout'));
     await until(find.text('Welcome Back'));
     expect(auth.currentUser, isNull);
+    expect(frameworkErrors, isEmpty, reason: frameworkErrors.join('\n'));
   });
 }

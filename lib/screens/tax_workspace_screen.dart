@@ -1,3 +1,4 @@
+import 'adviser_workpaper_decision_dialog.dart';
 import '../models/i1_adviser_decision.dart';
 import '../services/tax_rule_registry.dart';
 import '../services/accountant_workpaper_export.dart';
@@ -1010,6 +1011,44 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
     }
   }
 
+  Future<void> _customYear() async {
+    final input = await _textDialog(
+      'Open another tax year',
+      'Starting year (1900 to 2199)',
+      value: '$_year',
+    );
+    if (input == null || !_authorised || _busy) return;
+    final year = int.tryParse(input.trim());
+    if (year == null || year < 1900 || year > 2199) {
+      _message('Enter a starting year between 1900 and 2199.');
+      return;
+    }
+    setState(() {
+      _year = year;
+      _workspace = null;
+      _report = null;
+    });
+    _subscribe();
+    await _load();
+  }
+
+  Future<void> _adviserWorkpaper() async {
+    final bundle = _bundle;
+    if (!_editable || bundle == null) return;
+    final decision = await showAdviserWorkpaperDecisionDialog(
+      context,
+      yearStart: bundle.workspace.yearStart,
+      scopeFingerprint: bundle.adviserScopeFingerprint,
+      categoryTotals: bundle.report.categoryTotals,
+      issues: bundle.report.issues,
+      existing: bundle.workspace.adjudication,
+      present: (builder) => _showDialog(context: context, builder: builder),
+    );
+    if (decision != null && _editable) {
+      await _saveWorkspace(bundle.workspace.copyWith(adjudication: decision));
+    }
+  }
+
   Future<void> _exportReport({String format = 'json'}) async {
     final bundle = _bundle;
     if (!_authorised || _stale || _report == null || bundle == null) return;
@@ -1174,7 +1213,7 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Financial year',
                   ),
-                  items: TaxRuleRegistry.supportedYearStarts
+                  items: <int>{...TaxRuleRegistry.supportedYearStarts, _year}
                       .map(
                         (y) => DropdownMenuItem(
                           value: y,
@@ -1196,6 +1235,15 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                           }
                         },
                 ),
+                TextButton(
+                  key: const Key('workspace-custom-year'),
+                  onPressed: _busy ? null : _customYear,
+                  child: const Text('Open another tax year'),
+                ),
+                if (!TaxRuleRegistry.supports(_year))
+                  const Text(
+                    'This year requires an evidenced adviser annual workpaper. Automatic tax rules are unavailable.',
+                  ),
                 if (_error != null)
                   Text(
                     _error!,
@@ -1424,6 +1472,29 @@ class _TaxWorkspaceScreenState extends State<TaxWorkspaceScreen> {
                       onPressed: _editable ? () => _i1() : null,
                       child: const Text('Add I1 review'),
                     ),
+                  ]),
+                  _card('Adviser annual workpaper', [
+                    const Text(
+                      'Use complete evidenced annual totals for legal treatment requiring professional review. Source changes invalidate this decision; missing documents and unreviewed facts still need resolution.',
+                    ),
+                    if (workspace.adjudication != null)
+                      Text(
+                        'Adviser: ${workspace.adjudication!.adviserReference} / ${workspace.adjudication!.ruleVersion}',
+                      ),
+                    TextButton(
+                      key: const Key('workspace-adviser-workpaper'),
+                      onPressed: _editable ? _adviserWorkpaper : null,
+                      child: const Text('Review adviser annual totals'),
+                    ),
+                    if (workspace.adjudication != null)
+                      TextButton(
+                        onPressed: _editable
+                            ? () => _saveWorkspace(
+                                workspace.copyWith(clearAdjudication: true),
+                              )
+                            : null,
+                        child: const Text('Remove adviser decision'),
+                      ),
                   ]),
                   _card('Prefill reconciliation', [
                     const Text(

@@ -4,6 +4,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/investment_ledger.dart';
+import '../models/corporate_action_decision.dart';
+import '../models/tax_workspace.dart';
+import '../services/tax_rule_registry.dart';
 import '../models/investment_transaction.dart';
 import '../models/tax_decimal.dart';
 import '../models/managed_fund_statement.dart';
@@ -34,6 +37,10 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
   late final AuthService _auth;
   late final FirestoreService _store;
   List<InvestmentTransaction> _transactions = [];
+  List<CorporateActionDecision> _corporateActions = [];
+  List<I1Review> _i1Reviews = [];
+  int _workspaceGeneration = 0;
+  StreamSubscription<int>? _workspaceChanges;
   List<SaleAllocation> _allocations = [];
   List<ManagedFundStatement> _statements = [];
   List<Map<String, dynamic>> _savedSnapshots = [];
@@ -67,6 +74,8 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
       if (mounted && user?.uid != _ownerUid) {
         setState(() {
           _transactions = [];
+          _corporateActions = [];
+          _i1Reviews = [];
           _allocations = [];
           _statements = [];
           _savedSnapshots = [];
@@ -79,6 +88,26 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
       }
     });
     if (uid != null) {
+      _workspaceChanges = _store
+          .watchTaxWorkspaceGeneration(uid)
+          .listen(
+            (generation) {
+              if (mounted && !_loading && generation != _workspaceGeneration) {
+                setState(() {
+                  _stale = true;
+                  _snapshot = null;
+                });
+              }
+            },
+            onError: (_) {
+              if (mounted) {
+                setState(() {
+                  _stale = true;
+                  _snapshot = null;
+                });
+              }
+            },
+          );
       _generationChanges = _store
           .watchInvestmentLedgerGeneration(uid)
           .listen(
@@ -109,6 +138,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
     _lossEvidence.dispose();
     _lossOrigins.dispose();
     _generationChanges?.cancel();
+    _workspaceChanges?.cancel();
     _authChanges?.cancel();
     super.dispose();
   }
@@ -121,19 +151,28 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
     }
     try {
       // Read generation first; a concurrent source change rejects later saves.
+      final loadedYear = _year;
+      final workspaceGeneration = await _store.getTaxWorkspaceGeneration(uid);
+      final workspace = await _store.getTaxWorkspaceOnce(uid, loadedYear);
       final generation = await _store.getInvestmentLedgerGeneration(uid);
+      final corporateActions = await _store.getCorporateActionsOnce(uid);
       final transactions = await _store.getInvestmentTransactionsOnce(uid);
       final allocations = await _store.getInvestmentAllocationsOnce(uid);
       final statements = await _store.getManagedFundStatementsOnce(uid);
       final savedSnapshots = await _store.getInvestmentCalculationSnapshotsOnce(
         uid,
       );
-      if (generation != await _store.getInvestmentLedgerGeneration(uid)) {
+      if (loadedYear != _year ||
+          workspaceGeneration != await _store.getTaxWorkspaceGeneration(uid) ||
+          generation != await _store.getInvestmentLedgerGeneration(uid)) {
         throw StateError('Ledger changed while loading.');
       }
       if (!mounted || _auth.currentUser?.uid != _ownerUid) return;
       setState(() {
         _generation = generation;
+        _workspaceGeneration = workspaceGeneration;
+        _i1Reviews = workspace?.i1Reviews ?? [];
+        _corporateActions = corporateActions;
         _transactions = transactions;
         _allocations = allocations;
         _statements = statements;
@@ -157,6 +196,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
   InvestmentLedgerResult _ledger({List<SaleAllocation>? allocations}) =>
       InvestmentParcelLedger().replay(
         transactions: _transactions,
+        corporateActions: _corporateActions,
         allocations: allocations ?? _allocations,
         statements: _statements,
         asOfDate: DateTime(_year + 1, 6, 30),
@@ -177,6 +217,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
     }
     final earlier = InvestmentParcelLedger().replay(
       transactions: _transactions,
+      corporateActions: _corporateActions,
       allocations: _allocations,
       statements: _statements.where((s) => s.isReviewed).toList(),
       asOfDate: DateTime(
@@ -295,6 +336,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                     );
                     final trial = InvestmentParcelLedger().replay(
                       transactions: _transactions,
+                      corporateActions: _corporateActions,
                       statements: _statements
                           .where((s) => s.isReviewed)
                           .toList(),
@@ -393,6 +435,7 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
       ledger: ledger,
       year: TaxYear(_year),
       context: context,
+      i1Reviews: _i1Reviews,
     );
     final input = {
       'schemaVersion': 1,
@@ -400,6 +443,8 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
       'ruleVersion': result.snapshot['ruleVersion'],
       ...result.toMap(),
       'ledgerGeneration': _generation,
+      'workspaceGeneration': _workspaceGeneration,
+      'corporateActionRevisions': ledger.toMap()['corporateActionRevisions'],
       'inputRevisions': ledger.toMap()['inputRevisions'],
       'allocationRevisions': ledger.toMap()['allocationRevisions'],
       'statementRevisions': ledger.toMap()['statementRevisions'],
@@ -530,19 +575,27 @@ class _InvestmentLedgerScreenState extends State<InvestmentLedgerScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Financial year',
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 2024, child: Text('2024-2025')),
-                    DropdownMenuItem(value: 2025, child: Text('2025-2026')),
+                  items: [
+                    for (final year in TaxRuleRegistry.supportedYearStarts)
+                      DropdownMenuItem(
+                        value: year,
+                        child: Text('$year-${year + 1}'),
+                      ),
                   ],
                   onChanged: _busy
                       ? null
-                      : (v) => setState(() {
-                          _year = v!;
-                          _snapshot = null;
-                          _lossesReviewed = false;
-                          _lossEvidence.clear();
-                          _lossOrigins.clear();
-                        }),
+                      : (v) {
+                          setState(() {
+                            _year = v!;
+                            _loading = true;
+                            _i1Reviews = [];
+                            _snapshot = null;
+                            _lossesReviewed = false;
+                            _lossEvidence.clear();
+                            _lossOrigins.clear();
+                          });
+                          _load();
+                        },
                 ),
                 const SizedBox(height: 12),
                 const Text('Recorded remaining holdings at 30 June'),

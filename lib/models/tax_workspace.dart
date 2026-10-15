@@ -1,3 +1,4 @@
+import 'adviser_workpaper_decision.dart';
 import 'dart:convert';
 
 import '../utils/source_fingerprint.dart';
@@ -237,6 +238,7 @@ class TaxWorkspace {
   final Map<String, String> sectionStates, sectionEvidence, prefill;
   final List<ResidencyPeriod> residencyPeriods;
   final List<I1Review> i1Reviews;
+  final AdviserWorkpaperDecision? adjudication;
   const TaxWorkspace({
     required this.yearStart,
     required this.userId,
@@ -249,6 +251,7 @@ class TaxWorkspace {
     this.prefill = const {},
     this.residencyPeriods = const [],
     this.i1Reviews = const [],
+    this.adjudication,
   });
   TaxWorkspace copyWith({
     int? yearStart,
@@ -262,6 +265,8 @@ class TaxWorkspace {
     Map<String, String>? prefill,
     List<ResidencyPeriod>? residencyPeriods,
     List<I1Review>? i1Reviews,
+    AdviserWorkpaperDecision? adjudication,
+    bool clearAdjudication = false,
   }) => TaxWorkspace(
     yearStart: yearStart ?? this.yearStart,
     userId: userId ?? this.userId,
@@ -274,6 +279,7 @@ class TaxWorkspace {
     prefill: prefill ?? this.prefill,
     residencyPeriods: residencyPeriods ?? this.residencyPeriods,
     i1Reviews: i1Reviews ?? this.i1Reviews,
+    adjudication: clearAdjudication ? null : adjudication ?? this.adjudication,
   );
   Map<String, dynamic> toMap() => {
     'schemaVersion': 1,
@@ -288,6 +294,7 @@ class TaxWorkspace {
     'prefill': Map<String, String>.from(prefill),
     'residencyPeriods': residencyPeriods.map((v) => v.toMap()).toList(),
     'i1Reviews': i1Reviews.map((v) => v.toMap()).toList(),
+    if (adjudication != null) 'adjudication': adjudication!.toMap(),
   };
   factory TaxWorkspace.fromMap(Map<String, dynamic> m) {
     _workspaceKeys(m, {
@@ -303,6 +310,7 @@ class TaxWorkspace {
       'prefill',
       'residencyPeriods',
       'i1Reviews',
+      'adjudication',
       'id',
       'createdAt',
       'updatedAt',
@@ -325,6 +333,11 @@ class TaxWorkspace {
             (v) => ResidencyPeriod.fromMap(Map<String, dynamic>.from(v as Map)),
           )
           .toList(),
+      adjudication: m['adjudication'] == null
+          ? null
+          : AdviserWorkpaperDecision.fromMap(
+              Map<String, dynamic>.from(m['adjudication'] as Map),
+            ),
       i1Reviews: (m['i1Reviews'] as List)
           .map((v) => I1Review.fromMap(Map<String, dynamic>.from(v as Map)))
           .toList(),
@@ -357,6 +370,9 @@ class TaxWorkspace {
       'Invalid prefill amount',
     ...residencyPeriods.expand((p) => p.validation()),
     ...i1Reviews.expand((p) => p.validation()),
+    if (adjudication != null) ...adjudication!.validation(),
+    if (adjudication != null && adjudication!.yearStart != yearStart)
+      'Adviser workpaper belongs to another year',
   ];
 }
 
