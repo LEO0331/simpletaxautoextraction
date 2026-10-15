@@ -297,4 +297,56 @@ void main() {
       expect(stored.data()?['inputRevisions'], {id: 1});
     },
   );
+  test('I1 snapshot rejects missing or stale workspace generation', () async {
+    final id = await service.saveInvestmentTransaction(fact());
+    final snapshot = <String, dynamic>{
+      'ledgerGeneration': 1,
+      'inputRevisions': {id: 1},
+      'snapshot': {
+        'i1Reviews': [
+          {'date': '2025-05-01'},
+        ],
+      },
+    };
+    await expectLater(
+      service.saveInvestmentCalculationSnapshot('owner', snapshot),
+      throwsStateError,
+    );
+    snapshot['workspaceGeneration'] = 0;
+    await service.saveInvestmentCalculationSnapshot('owner', snapshot);
+    await db
+        .collection('users')
+        .doc('owner')
+        .collection('tax_workspace_metadata')
+        .doc('current')
+        .set({'generation': 1});
+    await expectLater(
+      service.saveInvestmentCalculationSnapshot('owner', snapshot),
+      throwsStateError,
+    );
+  });
+
+  test(
+    'snapshot verifies corporate action revisions independently of ledger generation',
+    () async {
+      final id = await service.saveInvestmentTransaction(fact());
+      final event = db
+          .collection('users')
+          .doc('owner')
+          .collection('investment_events')
+          .doc('synthetic-split');
+      await event.set({'revision': 1, 'isVoided': false});
+      final snapshot = <String, dynamic>{
+        'ledgerGeneration': 1,
+        'inputRevisions': {id: 1},
+        'corporateActionRevisions': {'synthetic-split': 1},
+      };
+      await service.saveInvestmentCalculationSnapshot('owner', snapshot);
+      await event.update({'revision': 2});
+      await expectLater(
+        service.saveInvestmentCalculationSnapshot('owner', snapshot),
+        throwsStateError,
+      );
+    },
+  );
 }

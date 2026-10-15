@@ -10,6 +10,7 @@ Future<AdviserWorkpaperDecision?> showAdviserWorkpaperDecisionDialog(
   required Map<String, String> categoryTotals,
   required List<String> issues,
   AdviserWorkpaperDecision? existing,
+  Future<AdviserWorkpaperDecision?> Function(WidgetBuilder builder)? present,
 }) async {
   final adviser = TextEditingController(text: existing?.adviserReference ?? '');
   final evidence = TextEditingController(
@@ -35,8 +36,24 @@ Future<AdviserWorkpaperDecision?> showAdviserWorkpaperDecisionDialog(
   bool reviewed = false, complete = false;
   String? error;
   try {
-    return await showDialog<AdviserWorkpaperDecision>(
-      context: context,
+    Future<AdviserWorkpaperDecision?> presentDialog({
+      required WidgetBuilder builder,
+    }) async {
+      if (present != null) return present(builder);
+      final route = DialogRoute<AdviserWorkpaperDecision>(
+        context: context,
+        builder: builder,
+      );
+      final result = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
+      // Controllers must outlive the TextFields during the route's exit animation.
+      await route.completed;
+      return result;
+    }
+
+    return await presentDialog(
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Text('Adviser-supplied workpaper $yearStart–${yearStart + 1}'),

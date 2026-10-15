@@ -1,6 +1,7 @@
 import '../models/investment_cgt_calculation.dart';
 import '../models/investment_cgt_summary.dart';
 import '../models/investment_transaction.dart';
+import '../models/corporate_action_decision.dart';
 import '../models/investment_ledger.dart';
 import '../models/tax_decimal.dart';
 import '../models/managed_fund_statement.dart';
@@ -28,6 +29,7 @@ class InvestmentCgtCalculator {
     required DateTime cutOffDate,
     required Map<String, double> tickerPrices,
     required List<InvestmentTransaction> transactions,
+    List<CorporateActionDecision> corporateActions = const [],
     List<SaleAllocation> allocations = const [],
     List<ManagedFundStatement> statements = const [],
   }) {
@@ -47,10 +49,14 @@ class InvestmentCgtCalculator {
             DateTime(cutOffDate.year, cutOffDate.month, cutOffDate.day),
           ),
     );
-    final usesLedger = hasSales || statements.any((s) => !s.isVoided);
+    final usesLedger =
+        corporateActions.any((a) => !a.isVoided) ||
+        hasSales ||
+        statements.any((s) => !s.isVoided);
     if (usesLedger) {
       final ledger = InvestmentParcelLedger().replay(
         transactions: transactions,
+        corporateActions: corporateActions,
         allocations: allocations,
         statements: statements,
         asOfDate: cutOffDate,

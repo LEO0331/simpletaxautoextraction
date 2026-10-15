@@ -220,4 +220,46 @@ void main() {
     expect(history.last['adjustments'], hasLength(12));
     expect(await service.getManagedFundStatementsOnce('synthetic'), isEmpty);
   });
+  test(
+    'fund detail manifest cannot be substituted across statement identities',
+    () async {
+      final db = FakeFirebaseFirestore();
+      final service = FirestoreService(db: db);
+      final statement = ManagedFundStatement(
+        id: null,
+        userId: 'synthetic',
+        ticker: 'TEST',
+        accountNumber: 'synthetic-account',
+        issuer: 'Synthetic',
+        layoutVersion: 'manual',
+        yearStart: 2024,
+        sourceReference: 'Synthetic',
+        components: {
+          for (final k in ManagedFundStatement.componentKeys) k: '0',
+        },
+      );
+      final id = await service.saveManagedFundStatement(statement);
+      final user = db.collection('users').doc('synthetic');
+      final original = await user
+          .collection('managed_fund_statements')
+          .doc(id)
+          .get();
+      final manifest = user
+          .collection('revision_details')
+          .doc(original.data()!['detailSetId'] as String);
+      await manifest.update({'subjectId': 'different-statement'});
+      await expectLater(
+        service.getManagedFundStatementsOnce('synthetic'),
+        throwsStateError,
+      );
+      await expectLater(
+        service.getManagedFundStatementRevisionsOnce('synthetic', id),
+        throwsStateError,
+      );
+      await expectLater(
+        service.saveManagedFundStatement(statement),
+        throwsStateError,
+      );
+    },
+  );
 }

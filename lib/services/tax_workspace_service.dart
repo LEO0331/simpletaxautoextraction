@@ -46,12 +46,32 @@ class TaxWorkspaceService {
     Map<String, dynamic> header,
   ) async {
     if (header['schemaVersion'] != 2) return header;
-    final records = await RevisionDetailStore(
-      db: _db,
-    ).read(uid, header, family: 'workspace');
+    final records = await RevisionDetailStore(db: _db).read(
+      uid,
+      header,
+      family: 'workspace',
+      subjectId: '${header['yearStart']}',
+    );
+    final adjudications = records
+        .where((r) => r['kind'] == 'adjudication')
+        .toList();
+    final losses = records
+        .where((r) => r['kind'] == 'adjudicationLoss')
+        .toList();
+    if (adjudications.length > 1 ||
+        (adjudications.isEmpty && losses.isNotEmpty)) {
+      throw StateError('Invalid linked adviser workpaper details.');
+    }
     return {
         ...header,
         'schemaVersion': 1,
+        if (adjudications.isNotEmpty)
+          'adjudication': {
+            ...Map<String, dynamic>.from(
+              adjudications.single['payload'] as Map,
+            ),
+            'closingLossBalances': losses.map((r) => r['payload']).toList(),
+          },
         'residencyPeriods': records
             .where((r) => r['kind'] == 'residency')
             .map((r) => r['payload'])
@@ -72,6 +92,34 @@ class TaxWorkspaceService {
   ) async {
     if (header['schemaVersion'] != 2) return header;
     final payload = await RevisionDetailStore(db: _db).readArchive(uid, header);
+    if (header['kind'] == 'finalised') {
+      final report = payload['report'];
+      if (report is! Map ||
+          payload['sourceFingerprint'] != report['sourceFingerprint'] ||
+          canonicalTaxFingerprint(header['payloadHeader']) !=
+              canonicalTaxFingerprint({
+                'sourceFingerprint': payload['sourceFingerprint'],
+                'report': {
+                  for (final key in [
+                    'canFinalise',
+                    'workspaceGeneration',
+                    'investmentGeneration',
+                    'sourceFingerprint',
+                  ])
+                    key: report[key],
+                },
+              }) ||
+          report['canFinalise'] != true ||
+          report['workspaceGeneration'] != header['workspaceGeneration'] ||
+          report['investmentGeneration'] != header['investmentGeneration']) {
+        throw StateError(
+          'Finalised archive header does not match its financial report.',
+        );
+      }
+    } else if (canonicalTaxFingerprint(header['payloadHeader']) !=
+        canonicalTaxFingerprint({})) {
+      throw StateError('Imported archive header is malformed.');
+    }
     return {...header, 'schemaVersion': 1, 'payload': payload}
       ..remove('detailSetId')
       ..remove('detailCount')
@@ -124,7 +172,10 @@ class TaxWorkspaceService {
     if (!all) query = query.limit(20);
     return Future.wait(
       (await query.get()).docs.map(
-        (v) async => {'id': v.id, ...await _hydrateSnapshot(uid, v.data())},
+        (v) async => {
+          'id': v.id,
+          ...await _hydrateSnapshot(uid, {...v.data(), 'id': v.id}),
+        },
       ),
     );
   }
@@ -167,12 +218,7 @@ class TaxWorkspaceService {
       revision: workspace.revision + 1,
       generation: stagedGeneration,
       yearStart: workspace.yearStart,
-      records: [
-        for (final p in workspace.residencyPeriods)
-          {'kind': 'residency', 'payload': p.toMap()},
-        for (final i in workspace.i1Reviews)
-          {'kind': 'i1', 'payload': i.toMap()},
-      ],
+      records: _workspaceDetails(workspace),
     );
     final archiveDetails = frozen == null
         ? null
@@ -235,6 +281,7 @@ class TaxWorkspaceService {
       };
       data.remove('residencyPeriods');
       data.remove('i1Reviews');
+      data.remove('adjudication');
       details.publish(transaction, workspaceDetails);
       if (archiveDetails != null) details.publish(transaction, archiveDetails);
       transaction.set(ref, data);
@@ -338,6 +385,7 @@ class TaxWorkspaceService {
     }
     final ref = _year(uid, year);
     final metadata = _metadata(uid);
+    final raw = (await ref.get()).data();
     final loaded = await getWorkspace(uid, year);
     if (loaded == null ||
         loaded.revision != expectedRevision ||
@@ -346,19 +394,17 @@ class TaxWorkspaceService {
     }
     final generation = await getGeneration(uid);
     final details = RevisionDetailStore(db: _db);
-    final staged = await details.stage(
-      userId: uid,
-      family: 'workspace',
-      subjectId: '$year',
-      revision: expectedRevision + 1,
-      generation: generation,
-      yearStart: year,
-      records: [
-        for (final p in loaded.residencyPeriods)
-          {'kind': 'residency', 'payload': p.toMap()},
-        for (final i in loaded.i1Reviews) {'kind': 'i1', 'payload': i.toMap()},
-      ],
-    );
+    final staged = raw?['schemaVersion'] != 2
+        ? null
+        : await details.stage(
+            userId: uid,
+            family: 'workspace',
+            subjectId: '$year',
+            revision: expectedRevision + 1,
+            generation: generation,
+            yearStart: year,
+            records: _workspaceDetails(loaded),
+          );
     return _db.runTransaction((transaction) async {
       final current = await transaction.get(ref);
       final state = await transaction.get(metadata);
@@ -367,19 +413,26 @@ class TaxWorkspaceService {
           current.data()?['revision'] != expectedRevision) {
         throw StateError('Reload the finalised workspace before amending.');
       }
-      await details.verify(transaction, staged);
+      if (staged != null) {
+        if (staged.hash != raw?['detailHash']) {
+          throw StateError('Amendment must preserve frozen financial details.');
+        }
+        await details.verify(transaction, staged);
+      }
       final data = {
         ...current.data()!,
-        'schemaVersion': 2,
-        ...staged.fields,
+        if (staged != null) ...{'schemaVersion': 2, ...staged.fields},
         'status': 'draft',
         'amendmentReason': reason.trim(),
         'revision': expectedRevision + 1,
         'updatedAt': FieldValue.serverTimestamp(),
       };
-      data.remove('residencyPeriods');
-      data.remove('i1Reviews');
-      details.publish(transaction, staged);
+      if (staged != null) {
+        data.remove('residencyPeriods');
+        data.remove('i1Reviews');
+        data.remove('adjudication');
+        details.publish(transaction, staged);
+      }
       transaction.set(ref, data);
       transaction.set(
         ref.collection('revisions').doc('${expectedRevision + 1}'),
@@ -437,3 +490,17 @@ class TaxWorkspaceService {
     return identity;
   }
 }
+
+List<Map<String, dynamic>> _workspaceDetails(TaxWorkspace workspace) => [
+  for (final p in workspace.residencyPeriods)
+    {'kind': 'residency', 'payload': p.toMap()},
+  for (final i in workspace.i1Reviews) {'kind': 'i1', 'payload': i.toMap()},
+  if (workspace.adjudication != null) ...[
+    {
+      'kind': 'adjudication',
+      'payload': workspace.adjudication!.toMap()..remove('closingLossBalances'),
+    },
+    for (final balance in workspace.adjudication!.closingLossBalances)
+      {'kind': 'adjudicationLoss', 'payload': balance.toMap()},
+  ],
+];

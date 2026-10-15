@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/investment_transaction.dart';
+import '../models/corporate_action_decision.dart';
 import '../models/investment_ledger.dart';
 import '../models/tax_decimal.dart';
 import '../models/managed_fund_statement.dart';
@@ -35,6 +36,7 @@ class _InvestmentCgtCalculationSetupScreenState
   final Map<String, TextEditingController> _priceControllers = {};
   bool _loading = true;
   List<InvestmentTransaction> _transactions = const [];
+  List<CorporateActionDecision> _corporateActions = const [];
   List<SaleAllocation> _allocations = const [];
   List<ManagedFundStatement> _statements = const [];
   String? _loadError;
@@ -53,6 +55,7 @@ class _InvestmentCgtCalculationSetupScreenState
       if (mounted && user?.uid != _ownerUid) {
         setState(() {
           _transactions = const [];
+          _corporateActions = const [];
           _allocations = const [];
           _statements = const [];
           _tickers = const [];
@@ -87,6 +90,9 @@ class _InvestmentCgtCalculationSetupScreenState
       final allocations = await _firestoreService.getInvestmentAllocationsOnce(
         user.uid,
       );
+      final corporateActions = await _firestoreService.getCorporateActionsOnce(
+        user.uid,
+      );
       final buys = records.where((r) => r.isBuy).toList();
       final statements = await _firestoreService.getManagedFundStatementsOnce(
         user.uid,
@@ -103,6 +109,7 @@ class _InvestmentCgtCalculationSetupScreenState
       if (mounted) {
         setState(() {
           _transactions = records;
+          _corporateActions = corporateActions;
           _generation = generation;
           _allocations = allocations;
           _statements = statements;
@@ -173,7 +180,8 @@ class _InvestmentCgtCalculationSetupScreenState
         )
         .map((t) => t.ticker)
         .toSet();
-    if (_statements.isNotEmpty ||
+    if (_corporateActions.isNotEmpty ||
+        _statements.isNotEmpty ||
         _transactions.any(
           (t) =>
               t.isSell &&
@@ -185,6 +193,7 @@ class _InvestmentCgtCalculationSetupScreenState
         )) {
       final ledger = InvestmentParcelLedger().replay(
         transactions: _transactions,
+        corporateActions: _corporateActions,
         allocations: _allocations,
         statements: _statements,
         asOfDate: _cutOffDate,
@@ -230,6 +239,7 @@ class _InvestmentCgtCalculationSetupScreenState
         cutOffDate: _cutOffDate!,
         tickerPrices: prices,
         transactions: _transactions,
+        corporateActions: _corporateActions,
         allocations: _allocations,
         statements: _statements,
       ),

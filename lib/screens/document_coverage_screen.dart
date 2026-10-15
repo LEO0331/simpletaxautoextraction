@@ -5,13 +5,21 @@ import '../services/document_coverage_service.dart';
 import '../services/auth_service.dart';
 
 class DocumentCoverageScreen extends StatefulWidget {
-  const DocumentCoverageScreen({super.key});
+  final AuthService? authService;
+  final DocumentCoverageService? coverageService;
+  const DocumentCoverageScreen({
+    super.key,
+    this.authService,
+    this.coverageService,
+  });
   @override
   State<DocumentCoverageScreen> createState() => _DocumentCoverageScreenState();
 }
 
 class _DocumentCoverageScreenState extends State<DocumentCoverageScreen> {
-  final _auth = AuthService(), _service = DocumentCoverageService();
+  late final AuthService _auth;
+  late final DocumentCoverageService _service;
+  DialogRoute<DocumentCoverage>? _dialogRoute;
   var _year = 2024;
   List<DocumentCoverage> _records = [];
   String? _error;
@@ -19,9 +27,14 @@ class _DocumentCoverageScreenState extends State<DocumentCoverageScreen> {
   @override
   void initState() {
     super.initState();
+    _auth = widget.authService ?? AuthService();
+    _service = widget.coverageService ?? DocumentCoverageService();
     _load();
     _authSubscription = _auth.authStateChanges.listen((_) {
       if (!mounted) return;
+      if (_dialogRoute?.isCurrent == true) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
       setState(() {
         _records = [];
         _error = null;
@@ -66,7 +79,8 @@ class _DocumentCoverageScreenState extends State<DocumentCoverageScreen> {
     var family = old?.family ?? 'fundAnnual',
         state = old?.state ?? 'missing',
         required = old?.required ?? true;
-    final result = await showDialog<DocumentCoverage>(
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<DocumentCoverage>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, set) => AlertDialog(
@@ -218,6 +232,11 @@ class _DocumentCoverageScreenState extends State<DocumentCoverageScreen> {
         ),
       ),
     );
+    _dialogRoute = route;
+    final result = await navigator.push(route);
+    // Popping resolves before the closing transition removes the form.
+    await route.completed;
+    _dialogRoute = null;
     for (final c in [
       account,
       ticker,
@@ -232,7 +251,7 @@ class _DocumentCoverageScreenState extends State<DocumentCoverageScreen> {
     ]) {
       c.dispose();
     }
-    if (result == null || _auth.currentUser?.uid != uid) return;
+    if (!mounted || result == null || _auth.currentUser?.uid != uid) return;
     try {
       await _service.save(result, expectedRevision: old?.revision ?? 0);
       await _load();
@@ -254,38 +273,42 @@ class _DocumentCoverageScreenState extends State<DocumentCoverageScreen> {
       onPressed: _edit,
       child: const Icon(Icons.add),
     ),
-    body: ListView(
-      children: [
-        DropdownButton<int>(
-          value: _year,
-          items: [
-            for (var y = 2000; y <= 2025; y++)
-              DropdownMenuItem(value: y, child: Text('FY $y–${y + 1}')),
-          ],
-          onChanged: (v) {
-            setState(() {
-              _year = v!;
-              _records = [];
-              _error = null;
-            });
-            _load();
-          },
-        ),
-        if (_error != null) Text(_error!),
-        for (final r in _records)
-          ListTile(
-            title: Text('${r.account} / ${r.ticker}: ${r.family}'),
-            subtitle: Text('${r.state}${r.required ? ' · required' : ''}'),
-            onTap: () => _edit(r),
+    body: _auth.currentUser == null
+        ? const Center(child: Text('Sign in to access document evidence.'))
+        : ListView(
+            children: [
+              DropdownButton<int>(
+                value: _year,
+                items: [
+                  for (var y = 1900; y <= 2199; y++)
+                    DropdownMenuItem(value: y, child: Text('FY $y–${y + 1}')),
+                ],
+                onChanged: (v) {
+                  setState(() {
+                    _year = v!;
+                    _records = [];
+                    _error = null;
+                  });
+                  _load();
+                },
+              ),
+              if (_error != null) Text(_error!),
+              for (final r in _records)
+                ListTile(
+                  title: Text('${r.account} / ${r.ticker}: ${r.family}'),
+                  subtitle: Text(
+                    '${r.state}${r.required ? ' · required' : ''}',
+                  ),
+                  onTap: () => _edit(r),
+                ),
+              if (_records.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'Add expected documents for each account, fund and year, including missing documents.',
+                  ),
+                ),
+            ],
           ),
-        if (_records.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              'Add expected documents for each account, fund and year, including missing documents.',
-            ),
-          ),
-      ],
-    ),
   );
 }

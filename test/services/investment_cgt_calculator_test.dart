@@ -1,8 +1,57 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:simpletaxautoextraction/models/corporate_action_decision.dart';
 import 'package:simpletaxautoextraction/models/investment_transaction.dart';
 import 'package:simpletaxautoextraction/services/investment_cgt_calculator.dart';
 
 void main() {
+  test(
+    'estimate uses split-adjusted units without duplicating acquisition basis',
+    () {
+      final buy = InvestmentTransaction(
+        id: 'buy',
+        userId: 'owner',
+        ticker: 'SYN',
+        securityName: 'Synthetic',
+        transactionType: InvestmentTransactionType.buy,
+        tradeDate: DateTime(2024, 1, 1),
+        units: 10,
+        averagePrice: 10,
+        consideration: 100,
+        brokerage: 0,
+        totalCost: 100,
+        unitsExact: '10',
+        considerationExact: '100',
+        brokerageExact: '0',
+        totalCostExact: '100',
+        isReviewed: true,
+        accountNumber: 'synthetic',
+        confirmationNumber: 'buy',
+        sourceParser: 'synthetic',
+        parserVersion: 'v1',
+      );
+      final result = const InvestmentCgtCalculator().calculate(
+        cutOffDate: DateTime(2025, 6, 30),
+        tickerPrices: {'SYN': 6},
+        transactions: [buy],
+        corporateActions: [
+          const CorporateActionDecision(
+            id: 'split',
+            userId: 'owner',
+            date: '2025-01-01',
+            parcelId: 'buy',
+            oldUnits: '10',
+            newUnits: '20',
+            evidenceReference: 'Synthetic split notice',
+            reviewed: true,
+          ),
+        ],
+      );
+      expect(result.issues, isEmpty);
+      expect(result.calculations.single.transaction.unitsExact, '20');
+      expect(result.summary.totalCostBase, 100);
+      expect(result.summary.totalMarketValueAtCutOff, 120);
+    },
+  );
   group('InvestmentCgtCalculator', () {
     test('calculates rows and summary for eligible and non-eligible gains', () {
       const calculator = InvestmentCgtCalculator();

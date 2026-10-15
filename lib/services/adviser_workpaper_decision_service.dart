@@ -25,6 +25,7 @@ TaxWorkspaceReport applyAdviserWorkpaperDecision({
   required AdviserWorkpaperDecision decision,
   required String currentScopeFingerprint,
   int? currentYearStart,
+  Map<String, String>? prefill,
 }) {
   final invalid = decision.validation();
   if (currentYearStart != null && decision.yearStart != currentYearStart) {
@@ -45,8 +46,20 @@ TaxWorkspaceReport applyAdviserWorkpaperDecision({
   final eligible = invalid.isEmpty;
   final remaining = [
     for (final issue in baseReport.issues)
-      if (!eligible || !decision.legalIssuesCovered.contains(issue)) issue,
+      if ((!eligible || !decision.legalIssuesCovered.contains(issue)) &&
+          !(eligible &&
+              prefill != null &&
+              decision.totals.keys.any(
+                (key) => issue == 'Prefill mismatch for $key',
+              )))
+        issue,
     ...invalid,
+    if (eligible && prefill != null)
+      for (final entry in prefill.entries)
+        if (decision.totals.containsKey(entry.key) &&
+            TaxDecimal.parse(entry.value) !=
+                TaxDecimal.parse(decision.totals[entry.key]!))
+          'Prefill mismatch for ${entry.key}',
   ];
   final effectiveTotals = eligible
       ? decision.totals

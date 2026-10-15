@@ -33,11 +33,12 @@ InvestmentTransaction fixture(bool sale) => InvestmentTransaction(
 
 void main() {
   late FirestoreService store;
+  late FakeFirebaseFirestore db;
   late String buyId;
   late String sellId;
   late MockFirebaseAuth fakeAuth;
   Future<void> open(WidgetTester tester) async {
-    store = FirestoreService(db: FakeFirebaseFirestore());
+    store = FirestoreService(db: db = FakeFirebaseFirestore());
     buyId = await store.saveInvestmentTransaction(fixture(false));
     sellId = await store.saveInvestmentTransaction(fixture(true));
     final auth = fakeAuth = MockFirebaseAuth(
@@ -121,6 +122,28 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'a workspace I1 generation change invalidates the annual worksheet',
+    (tester) async {
+      await open(tester);
+      await db
+          .collection('users')
+          .doc('synthetic-owner')
+          .collection('tax_workspace_metadata')
+          .doc('current')
+          .set({'generation': 1});
+      await tester.pumpAndSettle();
+      await reveal(tester, find.byKey(const Key('calculate-annual')));
+      expect(
+        tester
+            .widget<ElevatedButton>(find.byKey(const Key('calculate-annual')))
+            .onPressed,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('signing out removes the previous account ledger from view', (
     tester,
   ) async {

@@ -66,6 +66,24 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('custom years are reachable with explicit adviser review gate', (
+    tester,
+  ) async {
+    await open(tester);
+    await tester.tap(find.byKey(const Key('workspace-custom-year')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '2030');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'This year requires an evidenced adviser annual workpaper. Automatic tax rules are unavailable.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('2030-2031'), findsOneWidget);
+  });
+
   testWidgets('unreviewed empty workspace stays provisional', (tester) async {
     await open(tester);
     await reveal(tester, const Key('workspace-calculate'));

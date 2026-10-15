@@ -10,6 +10,10 @@ import 'package:simpletaxautoextraction/models/tax_workspace.dart';
 import 'package:simpletaxautoextraction/services/account_backup_service.dart';
 import 'package:simpletaxautoextraction/services/firestore_service.dart';
 import 'package:simpletaxautoextraction/services/tax_workspace_service.dart';
+import 'package:simpletaxautoextraction/services/document_coverage_service.dart';
+import 'package:simpletaxautoextraction/services/investment_event_service.dart';
+import 'package:simpletaxautoextraction/models/document_coverage.dart';
+import 'package:simpletaxautoextraction/models/corporate_action_decision.dart';
 
 void main() {
   late FakeFirebaseFirestore original;
@@ -87,6 +91,69 @@ void main() {
   });
 
   test(
+    'inventory and split histories survive recovery without activating reviewed decisions',
+    () async {
+      await DocumentCoverageService(db: original).save(
+        const DocumentCoverage(
+          id: 'synthetic-inventory',
+          userId: 'owner',
+          taxYearStart: 2024,
+          account: 'Synthetic broker',
+          ticker: 'TEST',
+          family: 'fundAnnual',
+          state: 'reviewed',
+          evidenceReference: 'Synthetic statement',
+        ),
+        expectedRevision: 0,
+      );
+      await InvestmentEventService(db: original).saveCorporateAction(
+        CorporateActionDecision(
+          id: 'synthetic-split',
+          userId: 'owner',
+          date: '2024-01-01',
+          parcelId: buyId,
+          oldUnits: '10',
+          newUnits: '20',
+          evidenceReference: 'Synthetic split',
+          reviewed: true,
+        ),
+      );
+      final exported = await AccountBackupService(
+        db: original,
+      ).exportAccount('owner');
+      final destination = FakeFirebaseFirestore();
+      final service = AccountBackupService(db: destination);
+      final preview = await service.restoreAccount('owner', exported);
+      final inventory = await DocumentCoverageService(
+        db: destination,
+      ).getCoverage('owner', 2024);
+      expect(inventory.single.id, 'synthetic-inventory');
+      expect(inventory.single.state, 'available');
+      expect(
+        await InvestmentEventService(
+          db: destination,
+        ).getCorporateActions('owner'),
+        isEmpty,
+      );
+      final evidence = await service.getRecoveryEvidence('owner', preview.hash);
+      expect(
+        evidence.any(
+          (v) => v['path'] == 'investment_events/synthetic-split/revisions/1',
+        ),
+        isTrue,
+      );
+      expect(
+        evidence.any(
+          (v) =>
+              v['path'] == 'document_coverage/synthetic-inventory/revisions/1',
+        ),
+        isTrue,
+      );
+      await service.restoreAccount('owner', exported);
+    },
+  );
+
+  test(
     'full recovery retains IDs, histories and exact draft sources; retry is idempotent',
     () async {
       final destination = FakeFirebaseFirestore();
@@ -125,6 +192,27 @@ void main() {
         ).getInvestmentTransactionsOnce('owner')).length,
         1,
       );
+    },
+  );
+
+  test(
+    'a consistently rehashed foreign detail family is rejected before any recovery writes',
+    () async {
+      final changed = jsonDecode(backup) as Map<String, dynamic>;
+      final records = (changed['records'] as List).cast<Map>();
+      final manifest = records.firstWhere(
+        (r) =>
+            (r['path'] as String).startsWith('revision_details/') &&
+            (r['path'] as String).split('/').length == 2,
+      );
+      (manifest['data'] as Map)['family'] = 'archive';
+      final destination = FakeFirebaseFirestore();
+      final service = AccountBackupService(db: destination);
+      await expectLater(
+        service.restoreAccount('owner', jsonEncode(changed)),
+        throwsFormatException,
+      );
+      expect(await service.getRecoveryIds('owner'), isEmpty);
     },
   );
 
