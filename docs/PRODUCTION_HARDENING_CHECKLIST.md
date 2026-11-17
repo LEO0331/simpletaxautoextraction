@@ -10,6 +10,7 @@ Use this on release day for the production Firebase project.
 
 - [ ] Web app registered with **reCAPTCHA Enterprise** provider.
 - [ ] Allowed domains in reCAPTCHA include only production hostnames.
+- [ ] Set the public reCAPTCHA Enterprise site key as the GitHub Actions variable `FIREBASE_APP_CHECK_SITE_KEY` and deploy the Pages build. Confirm the deployed client sends verified requests before enabling enforcement. Builds without the variable leave App Check off for local emulators.
 - [ ] Token TTL set (default 1 hour is acceptable for launch).
 - [ ] Start in monitor mode, then enforce after clean metrics window.
 - [ ] Enforced for:
@@ -52,6 +53,7 @@ Sign-off: _________  Date: _________
 
 - [ ] Production uses a dedicated Firebase project.
 - [ ] `firestore.rules` from this repo are published.
+- [ ] Compare the active production rules with `firestore.rules` at the release commit. Pages publishes the web client only, so publish reviewed rules separately in Firebase Console before releasing the client.
 - [ ] Principle of least privilege applied to IAM roles.
 - [ ] MFA enforced for all console admins.
 - [ ] No stale members or unused service account keys.

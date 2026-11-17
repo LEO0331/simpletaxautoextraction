@@ -182,10 +182,12 @@ void main() {
     await until(find.byKey(const Key('workspace-year')));
     expect(find.textContaining('Reviewed · amount 1234.56'), findsNothing);
     await auth.signOut();
-    await until(find.text('Sign in again to access your tax workspace.'));
-    expect(find.textContaining('Synthetic payslip'), findsNothing);
-    await tester.pageBack();
     await until(find.text('Welcome Back'));
+    expect(
+      find.byKey(const Key('workspace-year'), skipOffstage: false),
+      findsNothing,
+    );
+    expect(find.textContaining('Synthetic payslip'), findsNothing);
     expect(auth.currentUser, isNull);
     await tester.enterText(find.widgetWithText(TextField, 'Email'), email);
     await tester.enterText(

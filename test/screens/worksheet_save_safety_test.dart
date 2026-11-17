@@ -79,7 +79,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('FY 2026-2027 already exists'), findsOneWidget);
     expect(find.text('Tax Worksheet 2025-2026'), findsOneWidget);
-    expect(DraftSyncService.instance.pendingDrafts, isEmpty);
+    expect(DraftSyncService.instance.pendingDraftsFor('u1'), isEmpty);
     final records = await service.getUserTaxRecords('u1').first;
     expect(records.length, 2);
     expect(
@@ -135,7 +135,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Could not save the copy.'), findsOneWidget);
       expect(find.text('Tax Worksheet 2025-2026'), findsOneWidget);
-      expect(DraftSyncService.instance.pendingDrafts, isEmpty);
+      expect(DraftSyncService.instance.pendingDraftsFor('u1'), isEmpty);
     },
   );
 }

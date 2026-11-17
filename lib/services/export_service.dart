@@ -7,6 +7,7 @@ import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../models/investment_cgt_calculation.dart';
 import '../models/tax_record.dart';
 import '../models/investment_transaction.dart';
+import '../utils/csv_text_cell.dart';
 
 class ExportService {
   String buildCsv(List<TaxRecord> records) {
@@ -17,14 +18,14 @@ class ExportService {
     for (final record in records) {
       buffer.writeln(
         [
-          _escape(record.propertyName),
-          _escape(record.financialYear),
+          csvTextCell(record.propertyName),
+          csvTextCell(record.financialYear),
           record.totalIncome.toStringAsFixed(2),
           record.totalExpenses.toStringAsFixed(2),
           record.netPosition.toStringAsFixed(2),
           record.isLocked ? 'Yes' : 'No',
-          _escape(record.notes),
-          _escape(record.sourceFileName ?? ''),
+          csvTextCell(record.notes),
+          csvTextCell(record.sourceFileName ?? ''),
         ].join(','),
       );
     }
@@ -87,11 +88,6 @@ class ExportService {
     );
   }
 
-  String _escape(String value) {
-    final sanitized = value.replaceAll('"', '""');
-    return '"$sanitized"';
-  }
-
   String exportInvestmentTransactionsToCsv(
     List<InvestmentTransaction> transactions,
   ) {
@@ -102,11 +98,11 @@ class ExportService {
     for (final t in transactions) {
       buffer.writeln(
         [
-          _escape(t.ticker),
-          _escape(t.securityName),
-          _escape(t.transactionType.value),
-          _escape(t.tradeDate.toIso8601String().split('T').first),
-          _escape(
+          csvTextCell(t.ticker),
+          csvTextCell(t.securityName),
+          csvTextCell(t.transactionType.value),
+          csvTextCell(t.tradeDate.toIso8601String().split('T').first),
+          csvTextCell(
             t.settlementDate == null
                 ? ''
                 : t.settlementDate!.toIso8601String().split('T').first,
@@ -117,11 +113,11 @@ class ExportService {
           t.brokerage.toStringAsFixed(2),
           (t.gst ?? 0).toStringAsFixed(2),
           t.totalCost.toStringAsFixed(2),
-          _escape(t.confirmationNumber ?? ''),
-          _escape(t.accountNumber ?? ''),
-          _escape(t.sourceFileName ?? ''),
+          csvTextCell(t.confirmationNumber ?? ''),
+          csvTextCell(t.accountNumber ?? ''),
+          csvTextCell(t.sourceFileName ?? ''),
           t.isLocked ? 'Yes' : 'No',
-          _escape(t.notes),
+          csvTextCell(t.notes),
         ].join(','),
       );
     }
@@ -139,13 +135,13 @@ class ExportService {
       final t = c.transaction;
       buffer.writeln(
         [
-          _escape(t.ticker),
-          _escape(t.securityName),
-          _escape(t.transactionType.value),
-          _escape(t.tradeDate.toIso8601String().split('T').first),
+          csvTextCell(t.ticker),
+          csvTextCell(t.securityName),
+          csvTextCell(t.transactionType.value),
+          csvTextCell(t.tradeDate.toIso8601String().split('T').first),
           t.units.toStringAsFixed(6),
           t.totalCost.toStringAsFixed(2),
-          _escape(c.cutOffDate.toIso8601String().split('T').first),
+          csvTextCell(c.cutOffDate.toIso8601String().split('T').first),
           c.cutOffPrice.toStringAsFixed(6),
           c.marketValueAtCutOff.toStringAsFixed(2),
           c.estimatedGainLoss.toStringAsFixed(2),

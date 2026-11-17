@@ -360,11 +360,14 @@ def main():
     commit(workspace_writes(boundary, 6))
     commit(workspace_writes(dict(boundary, revision=5, residencyPeriods=boundary['residencyPeriods']+[boundary['residencyPeriods'][0]]), 7), expected=403)
     rental = {'userId':'owner','financialYear':'2024-2025','propertyId':'synthetic',
-        'propertyName':'Synthetic rental','income':{},'expenses':{},'notes':'', 'isLocked':False,
-        'sourceFileName':None,'sourceParser':None,'parserVersion':'v1','lineItems':[],
+        'propertyName':'Synthetic rental','income':{'Gross rent':100},'expenses':{'Insurance':12.5},
+        'notes':'', 'isLocked':False,'parserVersion':'v1','lineItems':[],
         'createdAt':NOW,'updatedAt':NOW}
     commit([write('tax_records/rental', rental)], expected=403)
     commit([write('tax_records/rental', rental), write('tax_workspace_metadata/current', {'generation':7})])
+    rental_without_workspace = dict(rental, financialYear='2025-2026', sourceFileName=None, sourceParser=None)
+    commit([write('tax_records/rental-no-workspace', rental_without_workspace),
+            write('tax_workspace_metadata/current', {'generation':8})])
     imported={'schemaVersion':1,'kind':'imported','userId':'owner','yearStart':2024,'createdAt':NOW,'payload':{'synthetic':'historical workpaper'}}
     commit([write('tax_years/2024/snapshots/imported-'+'b'*64,imported)])
     commit([write('tax_years/2024/snapshots/imported-'+'b'*64,imported)],expected=403)

@@ -7,8 +7,9 @@ class DraftSyncService {
 
   final List<TaxRecord> _pendingDrafts = [];
 
-  List<TaxRecord> get pendingDrafts => List.unmodifiable(_pendingDrafts);
-  bool get hasPendingDrafts => _pendingDrafts.isNotEmpty;
+  List<TaxRecord> pendingDraftsFor(String userId) => List.unmodifiable(
+    _pendingDrafts.where((draft) => draft.userId == userId),
+  );
 
   void clearPendingDrafts() {
     _pendingDrafts.clear();
@@ -28,19 +29,22 @@ class DraftSyncService {
     }
   }
 
-  Future<int> syncAll(FirestoreService firestoreService) async {
+  Future<int> syncAll(
+    FirestoreService firestoreService, {
+    required String userId,
+    required bool Function() isCurrentSession,
+  }) async {
     int synced = 0;
-    final toRemove = <TaxRecord>[];
-    for (final draft in _pendingDrafts) {
+    for (final draft in pendingDraftsFor(userId)) {
+      if (!isCurrentSession()) break;
       try {
         await firestoreService.saveTaxRecord(draft);
-        toRemove.add(draft);
+        _pendingDrafts.remove(draft);
         synced++;
       } catch (_) {
         // Keep unsynced drafts for later retry.
       }
     }
-    _pendingDrafts.removeWhere(toRemove.contains);
     return synced;
   }
 }

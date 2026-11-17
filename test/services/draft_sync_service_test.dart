@@ -30,26 +30,40 @@ void main() {
       service.queueDraft(first);
       service.queueDraft(second);
 
-      expect(service.pendingDrafts.length, 1);
-      expect(service.pendingDrafts.first.totalIncome, 2);
+      final pending = service.pendingDraftsFor('u1');
+      expect(pending.length, 1);
+      expect(pending.first.totalIncome, 2);
     });
 
-    test('syncAll persists drafts and clears queue on success', () async {
-      final firestore = FirestoreService(db: FakeFirebaseFirestore());
-      service.queueDraft(
-        TaxRecord(
+    test(
+      'syncAll persists and clears only the active owner’s drafts',
+      () async {
+        final firestore = FirestoreService(db: FakeFirebaseFirestore());
+        service.queueDraft(
+          TaxRecord(
+            userId: 'u1',
+            financialYear: '2025-2026',
+            propertyId: 'p2',
+            income: {'Gross rent': 123},
+          ),
+        );
+
+        final otherDraft = TaxRecord(userId: 'u2', financialYear: '2025-2026');
+        service.queueDraft(otherDraft);
+
+        final synced = await service.syncAll(
+          firestore,
           userId: 'u1',
-          financialYear: '2025-2026',
-          propertyId: 'p2',
-          income: {'Gross rent': 123},
-        ),
-      );
+          isCurrentSession: () => true,
+        );
 
-      final synced = await service.syncAll(firestore);
-
-      expect(synced, greaterThanOrEqualTo(1));
-      final records = await firestore.getUserTaxRecords('u1').first;
-      expect(records.any((r) => r.financialYear == '2025-2026'), isTrue);
-    });
+        expect(synced, 1);
+        expect(service.pendingDraftsFor('u1'), isEmpty);
+        expect(service.pendingDraftsFor('u2'), [otherDraft]);
+        expect(await firestore.getUserTaxRecords('u2').first, isEmpty);
+        final records = await firestore.getUserTaxRecords('u1').first;
+        expect(records.any((r) => r.financialYear == '2025-2026'), isTrue);
+      },
+    );
   });
 }

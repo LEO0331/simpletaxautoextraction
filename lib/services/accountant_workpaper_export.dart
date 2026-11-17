@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
+import '../utils/csv_text_cell.dart';
 import 'tax_workspace_coordinator.dart';
 
 /// Portable workpapers, with every contribution and source included for review.
@@ -39,7 +40,7 @@ class AccountantWorkpaperExport {
   }
 
   String csv(TaxWorkspaceBundle bundle) =>
-      rows(bundle).map((row) => row.map(_cell).join(',')).join('\r\n');
+      rows(bundle).map((row) => row.map(csvTextCell).join(',')).join('\r\n');
 
   Uint8List pdf(TaxWorkspaceBundle bundle) {
     final document = PdfDocument();
@@ -85,12 +86,6 @@ class AccountantWorkpaperExport {
     } finally {
       document.dispose();
     }
-  }
-
-  static String _cell(String value) {
-    // Prevent spreadsheet formula execution for account references and document text.
-    final safe = RegExp(r'^\s*[=+@-]').hasMatch(value) ? "'$value" : value;
-    return '"${safe.replaceAll('"', '""')}"';
   }
 
   static List<List<String>> _flatten(
