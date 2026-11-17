@@ -30,23 +30,28 @@ class InvestmentTransactionUploadScreen extends StatefulWidget {
 class _InvestmentTransactionUploadScreenState
     extends State<InvestmentTransactionUploadScreen> {
   late final AuthService _authService;
+  late final String? _ownerUid;
   late final FirestoreService _firestoreService;
   late final PdfExtractionService _pdfExtractionService;
   bool _isProcessing = false;
   final List<_ParsedDraftItem> _parsed = [];
 
+  bool _isActiveOwner(String uid) =>
+      mounted && uid == _ownerUid && _authService.currentUser?.uid == uid;
+
   @override
   void initState() {
     super.initState();
     _authService = widget.authService ?? AuthService();
+    _ownerUid = _authService.currentUser?.uid;
     _firestoreService = widget.firestoreService ?? FirestoreService();
     _pdfExtractionService =
         widget.pdfExtractionService ?? PdfExtractionService();
   }
 
   Future<void> _pickAndParse() async {
-    final user = _authService.currentUser;
-    if (user == null) {
+    final uid = _ownerUid;
+    if (uid == null || !_isActiveOwner(uid)) {
       _showSnackBar('Please sign in again.');
       return;
     }
@@ -56,7 +61,7 @@ class _InvestmentTransactionUploadScreenState
       allowedExtensions: ['pdf'],
       withData: true,
     );
-    if (result == null) {
+    if (result == null || !_isActiveOwner(uid)) {
       return;
     }
     setState(() {
@@ -81,6 +86,7 @@ class _InvestmentTransactionUploadScreenState
                 bytes,
                 sourceFileName: f.name,
               );
+          if (!_isActiveOwner(uid)) return;
           _parsed.add(
             _ParsedDraftItem(
               fileName: f.name,
@@ -89,7 +95,8 @@ class _InvestmentTransactionUploadScreenState
               sourceHash: SourceFingerprint.sha256(bytes),
             ),
           );
-        } catch (e) {
+        } catch (_) {
+          if (!_isActiveOwner(uid)) return;
           _parsed.add(
             _ParsedDraftItem(
               fileName: f.name,
@@ -99,9 +106,6 @@ class _InvestmentTransactionUploadScreenState
             ),
           );
         }
-      }
-      if (mounted) {
-        setState(() {});
       }
     } finally {
       if (mounted) {
@@ -113,26 +117,23 @@ class _InvestmentTransactionUploadScreenState
   }
 
   Future<void> _reviewAndSave(_ParsedDraftItem item) async {
-    final user = _authService.currentUser;
-    if (user == null || item.extraction == null) {
+    final uid = _ownerUid;
+    if (uid == null || !_isActiveOwner(uid) || item.extraction == null) {
       return;
     }
     final tx = await Navigator.push<InvestmentTransaction>(
       context,
       MaterialPageRoute(
         builder: (_) => InvestmentTransactionReviewScreen(
-          userId: user.uid,
+          userId: uid,
           extraction: item.extraction!,
         ),
       ),
     );
-    if (tx == null) return;
+    if (tx == null || !_isActiveOwner(uid)) return;
 
-    final duplicate = await _firestoreService.findInvestmentDuplicate(
-      user.uid,
-      tx,
-    );
-    if (!mounted) return;
+    final duplicate = await _firestoreService.findInvestmentDuplicate(uid, tx);
+    if (!mounted || !_isActiveOwner(uid)) return;
 
     InvestmentTransaction toSave = tx.copyWith(sourceHash: item.sourceHash);
     if (duplicate != null) {
@@ -167,18 +168,25 @@ class _InvestmentTransactionUploadScreenState
       }
     }
 
+    if (!_isActiveOwner(uid)) return;
     try {
       await _firestoreService.saveInvestmentTransaction(toSave);
-      _showSnackBar('Investment transaction saved.');
+      if (_isActiveOwner(uid)) {
+        _showSnackBar('Investment transaction saved.');
+      }
     } on StateError {
-      _showSnackBar(
-        'Record changed or is locked. Reload and review before saving.',
-      );
+      if (_isActiveOwner(uid)) {
+        _showSnackBar(
+          'Record changed or is locked. Reload and review before saving.',
+        );
+      }
     } catch (_) {
       InvestmentDraftSyncService.instance.queueDraft(toSave);
-      _showSnackBar(
-        'Save failed. Reviewed draft queued for retry in this session.',
-      );
+      if (_isActiveOwner(uid)) {
+        _showSnackBar(
+          'Save failed. Reviewed draft queued for retry in this session.',
+        );
+      }
     }
   }
 
@@ -219,17 +227,19 @@ class _InvestmentTransactionUploadScreenState
   );
 
   Future<void> _retryDrafts() async {
-    final uid = _authService.currentUser?.uid;
-    if (uid == null) return;
+    final uid = _ownerUid;
+    if (uid == null || !_isActiveOwner(uid)) return;
     setState(() => _isProcessing = true);
     try {
       final count = await InvestmentDraftSyncService.instance.syncAll(
         _firestoreService,
         userId: uid,
       );
-      _showSnackBar(
-        '$count reviewed drafts saved. Remaining drafts may require review.',
-      );
+      if (_isActiveOwner(uid)) {
+        _showSnackBar(
+          '$count reviewed drafts saved. Remaining drafts may require review.',
+        );
+      }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -268,7 +278,7 @@ class _InvestmentTransactionUploadScreenState
               child: const Text('Enter transaction manually'),
             ),
             if (InvestmentDraftSyncService.instance.pendingDrafts.any(
-              (draft) => draft.userId == _authService.currentUser?.uid,
+              (draft) => draft.userId == _ownerUid,
             ))
               TextButton(
                 onPressed: _isProcessing ? null : _retryDrafts,

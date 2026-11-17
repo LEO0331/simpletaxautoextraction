@@ -73,22 +73,44 @@ class TaxRecord {
   double get netPosition => totalIncome - totalExpenses;
 
   factory TaxRecord.fromMap(Map<String, dynamic> data, String documentId) {
-    final rawLineItems = (data['lineItems'] as List?) ?? const [];
+    T? read<T>(String field) {
+      final value = data[field];
+      if (value == null) return null;
+      if (value is T) return value;
+      throw FormatException('Rental record $documentId has an invalid $field.');
+    }
+
+    Map<String, double> readAmounts(String field) {
+      final amounts = read<Map<String, dynamic>>(field) ?? const {};
+      final normalized = <String, double>{};
+      for (final entry in amounts.entries) {
+        final amount = entry.value;
+        if (amount is! num || !amount.isFinite) {
+          throw FormatException(
+            'Rental record $documentId has an invalid amount in $field.',
+          );
+        }
+        normalized[entry.key] = amount.toDouble();
+      }
+      return normalized;
+    }
+
+    final rawLineItems = read<List<dynamic>>('lineItems') ?? const [];
     return TaxRecord(
       id: documentId,
-      userId: data['userId'] ?? '',
-      financialYear: data['financialYear'] ?? '',
-      income: Map<String, double>.from(data['income'] ?? {}),
-      expenses: Map<String, double>.from(data['expenses'] ?? {}),
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
-      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
-      propertyId: data['propertyId'] ?? 'default',
-      propertyName: data['propertyName'] ?? 'Primary Property',
-      notes: data['notes'] ?? '',
-      isLocked: data['isLocked'] ?? false,
-      sourceFileName: data['sourceFileName'],
-      sourceParser: data['sourceParser'],
-      parserVersion: data['parserVersion'] ?? 'v1',
+      userId: read<String>('userId') ?? '',
+      financialYear: read<String>('financialYear') ?? '',
+      income: readAmounts('income'),
+      expenses: readAmounts('expenses'),
+      createdAt: read<Timestamp>('createdAt')?.toDate(),
+      updatedAt: read<Timestamp>('updatedAt')?.toDate(),
+      propertyId: read<String>('propertyId') ?? 'default',
+      propertyName: read<String>('propertyName') ?? 'Primary Property',
+      notes: read<String>('notes') ?? '',
+      isLocked: read<bool>('isLocked') ?? false,
+      sourceFileName: read<String>('sourceFileName'),
+      sourceParser: read<String>('sourceParser'),
+      parserVersion: read<String>('parserVersion') ?? 'v1',
       lineItems: rawLineItems
           .whereType<Map>()
           .map((entry) => Map<String, dynamic>.from(entry))

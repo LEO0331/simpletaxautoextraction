@@ -37,6 +37,25 @@ void main() {
       expect(excel, contains('2024-2025'));
     });
 
+    test('CSV keeps formula-like text literal and negative totals numeric', () {
+      final csv = service.buildCsv([
+        TaxRecord(
+          userId: 'u1',
+          financialYear: '2025-2026',
+          propertyName: '  -Unit A',
+          income: {'Gross rent': 20},
+          expenses: {'Water charges': 25},
+          notes: '＋New, "quoted" note',
+          sourceFileName: '\tstatement.pdf',
+        ),
+      ]);
+      expect(
+        csv.split('\n')[1],
+        '"[text]   -Unit A","2025-2026",20.00,25.00,-5.00,No,'
+        '"[text] ＋New, ""quoted"" note","[text] \tstatement.pdf"',
+      );
+    });
+
     test('buildSummaryPdf returns non-empty bytes', () {
       final bytes = service.buildSummaryPdf(records, title: 'Report');
       expect(bytes.length, greaterThan(100));

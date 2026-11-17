@@ -87,6 +87,14 @@ class _ComparisonScreenState extends State<ComparisonScreen> {
                 return const Center(child: CircularProgressIndicator());
               }
 
+              if (snapshot.hasError) {
+                return const Center(
+                  child: AppPanel(
+                    child: Text('Unable to compare rental records.'),
+                  ),
+                );
+              }
+
               if (!snapshot.hasData || snapshot.data!.isEmpty) {
                 return Center(
                   child: AppPanel(

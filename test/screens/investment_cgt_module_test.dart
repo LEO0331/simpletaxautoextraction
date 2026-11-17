@@ -1,9 +1,8 @@
-import 'dart:typed_data';
-
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simpletaxautoextraction/models/investment_transaction.dart';
 import 'package:simpletaxautoextraction/screens/investment_cgt_calculation_setup_screen.dart';
@@ -40,6 +39,7 @@ class _MockAuthService implements AuthService {
 class _FakePdfPicker extends FilePicker {
   _FakePdfPicker(this.result);
   final FilePickerResult? result;
+  int saveCalls = 0;
 
   @override
   Future<FilePickerResult?> pickFiles({
@@ -69,6 +69,7 @@ class _FakePdfPicker extends FilePicker {
     Uint8List? bytes,
     bool lockParentWindow = false,
   }) async {
+    saveCalls++;
     return null;
   }
 }
@@ -201,7 +202,20 @@ void main() {
     expect(find.textContaining('Cut-off date is required'), findsOneWidget);
   });
 
-  testWidgets('result screen shows discount eligibility text', (tester) async {
+  testWidgets('result screen shows discount and respects canceled export', (
+    tester,
+  ) async {
+    final picker = _FakePdfPicker(null);
+    FilePicker.platform = picker;
+    var clipboardWrites = 0;
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') clipboardWrites++;
+      return null;
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    });
     final tx = InvestmentTransaction(
       userId: 'u1',
       ticker: 'NDQ',
@@ -232,5 +246,10 @@ void main() {
       find.textContaining('Potential CGT discount eligible'),
       findsOneWidget,
     );
+    await tester.tap(find.text('Export CSV'));
+    await tester.pumpAndSettle();
+    expect(picker.saveCalls, 1);
+    expect(clipboardWrites, 0);
+    expect(find.text('Calculation CSV exported.'), findsNothing);
   });
 }

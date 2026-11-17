@@ -47,7 +47,7 @@ void main() {
       final text = AccountantWorkpaperExport().csv(bundle());
       expect(text, contains('123.45'));
       expect(text, contains('Verify synthetic source'));
-      expect(text, contains('"\'=unsafe, ""formula"""'));
+      expect(text, contains('"[text] =unsafe, ""formula"""'));
       expect(text, contains('Source evidence 179'));
       expect(text, contains('synthetic-fingerprint'));
     },

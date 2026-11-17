@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/investment_cgt_calculation.dart';
 import '../models/investment_transaction.dart';
@@ -97,22 +96,21 @@ class InvestmentCgtResultScreen extends StatelessWidget {
                   onPressed: () async {
                     final csv = _exportService
                         .exportInvestmentCgtCalculationToCsv(calculations);
-                    final saved = await saveTextFile(
-                      'investment_cgt_results.csv',
-                      csv,
-                    );
-                    if (!saved) {
-                      await Clipboard.setData(ClipboardData(text: csv));
-                    }
-                    if (context.mounted) {
+                    try {
+                      final saved = await saveTextFile(
+                        'investment_cgt_results.csv',
+                        csv,
+                      );
+                      if (!context.mounted || !saved) return;
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            saved
-                                ? 'Calculation CSV exported.'
-                                : 'CSV copied to clipboard.',
-                          ),
+                        const SnackBar(
+                          content: Text('Calculation CSV exported.'),
                         ),
+                      );
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Unable to save CSV.')),
                       );
                     }
                   },

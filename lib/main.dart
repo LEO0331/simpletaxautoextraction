@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -29,17 +30,57 @@ void main() async {
   // persistence can survive tab close and be restored on next open. Use
   // SESSION persistence so closing the tab clears auth state for that tab.
   if (kIsWeb) {
+    const siteKey = String.fromEnvironment('FIREBASE_APP_CHECK_SITE_KEY');
+    if (siteKey.isNotEmpty) {
+      await FirebaseAppCheck.instance.activate(
+        providerWeb: ReCaptchaEnterpriseProvider(siteKey),
+      );
+    }
     await FirebaseAuth.instance.setPersistence(Persistence.SESSION);
   }
 
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
   @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  // Keep navigation and in-memory screen state inside one auth session.
+  // The key changes even if sign-out and sign-in to the same UID arrive
+  // before Flutter builds another frame.
+  late final _sessions = FirebaseAuth.instance
+      .authStateChanges()
+      .map((user) => user?.uid)
+      .distinct()
+      .map((uid) => (uid: uid, key: UniqueKey()));
+
+  @override
   Widget build(BuildContext context) {
+    return StreamBuilder(
+      stream: _sessions,
+      builder: (context, snapshot) {
+        final session = snapshot.data;
+        return _buildApp(
+          context,
+          key: session?.key ?? const ValueKey('initializing'),
+          authenticated: session?.uid != null,
+          initializing: snapshot.connectionState == ConnectionState.waiting,
+        );
+      },
+    );
+  }
+
+  Widget _buildApp(
+    BuildContext context, {
+    required Key key,
+    required bool authenticated,
+    required bool initializing,
+  }) {
     final baseTextTheme = GoogleFonts.workSansTextTheme(
       Theme.of(context).textTheme,
     );
@@ -57,28 +98,35 @@ class MyApp extends StatelessWidget {
     );
 
     return MaterialApp(
+      key: key,
       title: 'Tax Auto Extraction',
       debugShowCheckedModeBanner: false,
+      initialRoute: Navigator.defaultRouteName,
       routes: {
-        InvestmentCgtRoutes.home: (_) => const InvestmentCgtHomeScreen(),
-        InvestmentCgtRoutes.upload: (_) =>
-            const InvestmentTransactionUploadScreen(),
-        InvestmentCgtRoutes.transactions: (_) =>
-            const InvestmentTransactionListScreen(),
-        InvestmentCgtRoutes.calculate: (_) =>
-            const InvestmentCgtCalculationSetupScreen(),
-        InvestmentCgtRoutes.ledger: (_) => const InvestmentLedgerScreen(),
-        InvestmentCgtRoutes.funds: (_) => const ManagedFundStatementScreen(),
-        '/tax-years': (_) => const TaxWorkspaceScreen(),
-        '/documents': (_) => const DocumentCoverageScreen(),
-        '/account-backup': (_) => const AccountBackupScreen(),
-        '/investment-cgt/import-csv': (_) => const BrokerCsvImportScreen(),
-        '/investment-cgt/drp-advice': (_) => const DrpAdviceScreen(),
-        '/investment-cgt/special-cases': (_) => const InvestmentSpecialCasesScreen(),
+        if (authenticated) ...{
+          InvestmentCgtRoutes.home: (_) => const InvestmentCgtHomeScreen(),
+          InvestmentCgtRoutes.upload: (_) =>
+              const InvestmentTransactionUploadScreen(),
+          InvestmentCgtRoutes.transactions: (_) =>
+              const InvestmentTransactionListScreen(),
+          InvestmentCgtRoutes.calculate: (_) =>
+              const InvestmentCgtCalculationSetupScreen(),
+          InvestmentCgtRoutes.ledger: (_) => const InvestmentLedgerScreen(),
+          InvestmentCgtRoutes.funds: (_) => const ManagedFundStatementScreen(),
+          '/tax-years': (_) => const TaxWorkspaceScreen(),
+          '/documents': (_) => const DocumentCoverageScreen(),
+          '/account-backup': (_) => const AccountBackupScreen(),
+          '/investment-cgt/import-csv': (_) => const BrokerCsvImportScreen(),
+          '/investment-cgt/drp-advice': (_) => const DrpAdviceScreen(),
+          '/investment-cgt/special-cases': (_) =>
+              const InvestmentSpecialCasesScreen(),
+        },
       },
       onGenerateRoute: (settings) {
-        if (settings.name == InvestmentCgtRoutes.results) {
-          final args = settings.arguments as InvestmentCgtResultArgs;
+        final args = settings.arguments;
+        if (authenticated &&
+            settings.name == InvestmentCgtRoutes.results &&
+            args is InvestmentCgtResultArgs) {
           return MaterialPageRoute(
             builder: (_) => InvestmentCgtResultScreen(args: args),
           );
@@ -135,22 +183,11 @@ class MyApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            );
-          }
-
-          if (snapshot.hasData) {
-            return const HomeScreen(); // User is logged in
-          }
-
-          return const AuthScreen(); // User is not logged in
-        },
-      ),
+      home: initializing
+          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+          : authenticated
+          ? const HomeScreen()
+          : const AuthScreen(),
     );
   }
 }

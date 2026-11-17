@@ -221,6 +221,10 @@ class _AccountBackupScreenState extends State<AccountBackupScreen> {
                 const Text(
                   'Export rental, investment, fund and tax-year records, parser mappings, properties and all retained revisions and snapshots. PDF files and authentication information are excluded.',
                 ),
+                const SizedBox(height: 8),
+                const Text(
+                  'The backup contains sensitive tax data in an unencrypted JSON file. Store it in a private location and avoid shared or automatically synced folders.',
+                ),
                 const SizedBox(height: 16),
                 const Text(
                   'Recovery requires the same owner and an empty account dataset. Sources reopen as unreviewed drafts and document evidence needs review. Original parcel selections, corporate actions, I1 and adviser decisions, and final reports remain accessible as historical evidence; review and recalculate before finalising.',

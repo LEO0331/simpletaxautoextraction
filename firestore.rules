@@ -13,6 +13,44 @@ service cloud.firestore {
       return value == null || (value is string && value.size() <= maxLen);
     }
 
+    function validOptionalTimestamp(value) {
+      return value == null || value is timestamp;
+    }
+
+    function validRentalAmount(value) {
+      // Subtracting a non-finite value from itself does not produce zero.
+      return value is number && value - value == 0;
+    }
+
+    // Older records may contain custom category names. Validate the worksheet
+    // categories here and validate all entries in the reader.
+    function validRentalIncome(amounts) {
+      return amounts is map
+        && validRentalAmount(amounts.get('Gross rent', 0))
+        && validRentalAmount(amounts.get('Other rental-related income', 0));
+    }
+
+    function validRentalExpenses(amounts) {
+      return amounts is map
+        && validRentalAmount(amounts.get('Advertising for tenants', 0))
+        && validRentalAmount(amounts.get('Body corporate fees and charges', 0))
+        && validRentalAmount(amounts.get('Borrowing expenses', 0))
+        && validRentalAmount(amounts.get('Cleaning', 0))
+        && validRentalAmount(amounts.get('Council rates', 0))
+        && validRentalAmount(amounts.get('Capital works deductions', 0))
+        && validRentalAmount(amounts.get('Gardening and lawn mowing', 0))
+        && validRentalAmount(amounts.get('Insurance', 0))
+        && validRentalAmount(amounts.get('Interest on loans', 0))
+        && validRentalAmount(amounts.get('Land tax', 0))
+        && validRentalAmount(amounts.get('Legal expenses', 0))
+        && validRentalAmount(amounts.get('Pest control', 0))
+        && validRentalAmount(amounts.get('Property agent fees and commission', 0))
+        && validRentalAmount(amounts.get('Repairs and maintenance', 0))
+        && validRentalAmount(amounts.get('Stationery, telephone and postage', 0))
+        && validRentalAmount(amounts.get('Water charges', 0))
+        && validRentalAmount(amounts.get('Sundry rental expenses', 0));
+    }
+
     function validTaxRecord(data, userId) {
       return data.keys().hasAll([
           'userId',
@@ -46,13 +84,15 @@ service cloud.firestore {
         && validString(data.financialYear, 16)
         && validString(data.propertyId, 64)
         && validString(data.propertyName, 120)
-        && (data.income is map)
-        && (data.expenses is map)
+        && validRentalIncome(data.income)
+        && validRentalExpenses(data.expenses)
         && (data.notes is string)
         && data.notes.size() <= 2000
         && (data.isLocked is bool)
-        && validOptionalString(data.sourceFileName, 255)
-        && validOptionalString(data.sourceParser, 120)
+        && validOptionalString(data.get('sourceFileName', null), 255)
+        && validOptionalString(data.get('sourceParser', null), 120)
+        && validOptionalTimestamp(data.get('createdAt', null))
+        && validOptionalTimestamp(data.get('updatedAt', null))
         && validString(data.parserVersion, 24)
         && (data.lineItems is list);
     }
@@ -257,7 +297,8 @@ service cloud.firestore {
     }
     function yearUnlocked(uid, year) {
       let path = /databases/$(database)/documents/users/$(uid)/tax_years/$(year);
-      return !exists(path) || get(path).data.status == 'draft';
+      return (!exists(path) || get(path).data.status == 'draft')
+        && (!existsAfter(path) || getAfter(path).data.status == 'draft');
     }
     function validWorkspacePeriod(p) {
       return p is map && p.keys().hasOnly(['start','endExclusive','classification','evidence','reviewed'])
@@ -613,10 +654,12 @@ service cloud.firestore {
         }
         match /items/{itemId} {
           allow read: if isOwner(userId);
-          allow create: if isOwner(userId) && get(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft' && validWorkspaceItem(request.resource.data,userId,yearId)
+          allow create: if isOwner(userId) && get(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft'
+            && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft' && validWorkspaceItem(request.resource.data,userId,yearId)
             && request.resource.data.revision==1 && workspaceAdvanced(userId)
             && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/items/$(itemId)/revisions/1).data==request.resource.data;
-          allow update: if isOwner(userId) && get(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft' && validWorkspaceItem(request.resource.data,userId,yearId)
+          allow update: if isOwner(userId) && get(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft'
+            && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)).data.status=='draft' && validWorkspaceItem(request.resource.data,userId,yearId)
             && request.resource.data.revision==resource.data.revision+1 && request.resource.data.category==resource.data.category && request.resource.data.sourceReference==resource.data.sourceReference && workspaceAdvanced(userId)
             && getAfter(/databases/$(database)/documents/users/$(userId)/tax_years/$(yearId)/items/$(itemId)/revisions/$(request.resource.data.revision)).data==request.resource.data;
           allow delete: if false;

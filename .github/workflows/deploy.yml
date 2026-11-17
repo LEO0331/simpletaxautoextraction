@@ -7,8 +7,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -21,6 +19,10 @@ jobs:
   build-and-deploy:
     needs: release-verification
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -40,7 +42,9 @@ jobs:
         run: flutter analyze --fatal-infos --fatal-warnings
 
       - name: Build Web
-        run: flutter build web --release --base-href "/simpletaxautoextraction/"
+        env:
+          FIREBASE_APP_CHECK_SITE_KEY: ${{ vars.FIREBASE_APP_CHECK_SITE_KEY }}
+        run: flutter build web --release --base-href "/simpletaxautoextraction/" --dart-define="FIREBASE_APP_CHECK_SITE_KEY=$FIREBASE_APP_CHECK_SITE_KEY"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

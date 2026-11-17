@@ -1,6 +1,5 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/tax_record.dart';
@@ -47,6 +46,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, String> _customIncomeMappings = const {};
   Map<String, String> _customExpenseMappings = const {};
 
+  bool _isActiveUser(String userId) =>
+      mounted && _authService.currentUser?.uid == userId;
+
   @override
   void initState() {
     super.initState();
@@ -85,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {
       mappings = const {'income': {}, 'expense': {}};
     }
-    if (!mounted) {
+    if (!_isActiveUser(user.uid)) {
       return;
     }
     setState(() {
@@ -95,14 +97,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _syncQueuedDrafts() async {
-    if (_isSyncingDrafts) {
+    final userId = _authService.currentUser?.uid;
+    if (_isSyncingDrafts || userId == null) {
       return;
     }
     setState(() {
       _isSyncingDrafts = true;
     });
-    final synced = await DraftSyncService.instance.syncAll(_firestoreService);
-    if (mounted && synced > 0) {
+    final synced = await DraftSyncService.instance.syncAll(
+      _firestoreService,
+      userId: userId,
+      isCurrentSession: () => _isActiveUser(userId),
+    );
+    if (_isActiveUser(userId) && synced > 0) {
       _showSnackBar('Synced $synced offline draft(s).');
     }
     if (mounted) {
@@ -125,7 +132,7 @@ class _HomeScreenState extends State<HomeScreen> {
       withData: true,
     );
 
-    if (result == null) {
+    if (result == null || !_isActiveUser(user.uid)) {
       return;
     }
 
@@ -137,7 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final selectedYear = await _showYearDialog();
-    if (selectedYear == null) {
+    if (selectedYear == null || !_isActiveUser(user.uid)) {
       return;
     }
 
@@ -146,14 +153,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final refreshedUser = _authService.currentUser;
-      if (refreshedUser == null) {
-        throw StateError('Authentication expired while importing.');
-      }
-
       final preview = await _pdfExtractionService.extractPreviewFromPdf(
         bytes,
-        refreshedUser.uid,
+        user.uid,
         selectedYear,
         propertyId: _selectedPropertyId,
         propertyName: _selectedPropertyName,
@@ -162,16 +164,17 @@ class _HomeScreenState extends State<HomeScreen> {
         customExpenseMappings: _customExpenseMappings,
       );
 
+      if (!_isActiveUser(user.uid)) return;
       final reviewedRecord = await _showImportPreviewDialog(preview);
-      if (reviewedRecord == null || !mounted) {
+      if (reviewedRecord == null || !_isActiveUser(user.uid)) {
         return;
       }
 
       final continueImport = await _showOverwriteDiffIfNeeded(
-        refreshedUser.uid,
+        user.uid,
         reviewedRecord,
       );
-      if (!continueImport || !mounted) {
+      if (!continueImport || !mounted || !_isActiveUser(user.uid)) {
         return;
       }
 
@@ -185,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     } catch (e) {
-      if (!mounted) {
+      if (!_isActiveUser(user.uid)) {
         return;
       }
       _showSnackBar(
@@ -212,7 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
       propertyId: candidate.propertyId,
     );
 
-    if (existing == null || !mounted) {
+    if (!mounted || !_isActiveUser(userId)) return false;
+    if (existing == null) {
       return true;
     }
 
@@ -491,20 +495,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ? _exportService.buildExcelFriendlyContent(_latestRecords)
         : _exportService.buildCsv(_latestRecords);
 
-    final saved = await saveTextFile(
-      '${_selectedPropertyId}_${excelFriendly ? 'excel' : 'records'}.csv',
-      content,
-    );
-
-    if (!saved && mounted) {
-      await Clipboard.setData(ClipboardData(text: content));
-      _showSnackBar('Export copied to clipboard (save dialog unavailable).');
-      return;
+    try {
+      final saved = await saveTextFile(
+        '${_selectedPropertyId}_${excelFriendly ? 'excel' : 'records'}.csv',
+        content,
+      );
+      if (!mounted || !saved) return;
+      _showSnackBar(
+        excelFriendly ? 'Excel-friendly CSV exported.' : 'CSV exported.',
+      );
+    } catch (_) {
+      if (mounted) _showSnackBar('Unable to save CSV.');
     }
-
-    _showSnackBar(
-      excelFriendly ? 'Excel-friendly CSV exported.' : 'CSV exported.',
-    );
   }
 
   Future<void> _exportSummaryPdf() async {
@@ -877,6 +879,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final user = _authService.currentUser;
+    final pendingDraftCount = user == null
+        ? 0
+        : DraftSyncService.instance.pendingDraftsFor(user.uid).length;
     final primary = Theme.of(context).colorScheme.primary;
     final accent = Theme.of(context).colorScheme.secondary;
 
@@ -995,12 +1000,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           _buildPropertySelector(user.uid),
-                          if (DraftSyncService.instance.hasPendingDrafts)
+                          if (pendingDraftCount > 0)
                             Card(
                               color: const Color(0xFFFFF2D8),
                               child: ListTile(
                                 title: Text(
-                                  '${DraftSyncService.instance.pendingDrafts.length} offline draft(s) pending sync.',
+                                  '$pendingDraftCount offline draft(s) pending sync.',
                                 ),
                                 trailing: _isSyncingDrafts
                                     ? const SizedBox(
@@ -1067,6 +1072,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ConnectionState.waiting) {
                                   return const Center(
                                     child: CircularProgressIndicator(),
+                                  );
+                                }
+
+                                if (snapshot.hasError) {
+                                  _latestRecords = const [];
+                                  return const Center(
+                                    child: AppPanel(
+                                      child: Text(
+                                        'Unable to load rental records.',
+                                      ),
+                                    ),
                                   );
                                 }
 
